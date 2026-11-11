@@ -64,6 +64,59 @@ body {
 #mute.off { color: #ff8a8a; border-color: #b85a5a; }
 #mute svg { display: block; }
 
+/* ---- leaderboard name prompt (FF7-style blue menu controls; sized/positioned by game.js) */
+#namebox {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  pointer-events: none;   /* only the controls themselves take input; the canvas keeps the rest */
+}
+#namebox[hidden], #namebox [hidden] { display: none; }
+
+#nameinput, #namesubmit, #nameskip {
+  position: absolute;
+  box-sizing: border-box;
+  pointer-events: auto;
+  margin: 0;
+  font-family: "Courier New", monospace;
+  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  border-radius: 3px;
+  touch-action: manipulation;
+}
+
+#nameinput {
+  padding: 0 10px;
+  color: #ffffff;
+  caret-color: #ffe27a;
+  background: #040b24;
+  border: 2px solid #c9dcf0;
+  outline: none;
+  text-align: center;
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-appearance: none;
+  appearance: none;
+}
+#nameinput::placeholder { color: #5f7ca6; }
+#nameinput:focus { border-color: #ffe27a; box-shadow: 0 0 0 2px rgba(255, 226, 122, 0.3); }
+#nameinput:disabled { opacity: 0.6; }
+
+#namesubmit, #nameskip {
+  color: #ffffff;
+  background: linear-gradient(180deg, #1d4a96 0%, #0b1f55 100%);
+  border: 2px solid #c9dcf0;
+  cursor: pointer;
+  text-shadow: 1px 1px 0 #02061a;
+  padding: 0;
+}
+#nameskip { color: #bcd4f0; background: linear-gradient(180deg, #162e63 0%, #081538 100%); }
+#namesubmit:hover, #nameskip:hover { border-color: #ffe27a; }
+#namesubmit:active, #nameskip:active { background: #0a1a44; }
+#namesubmit:focus-visible, #nameskip:focus-visible { outline: 2px solid #ffe27a; outline-offset: 2px; }
+#namesubmit:disabled { opacity: 0.55; cursor: default; }
+
 .nojs {
   position: fixed;
   inset: 0;

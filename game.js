@@ -14,7 +14,7 @@ const HIT_R = 13, HIT_OY = -4; // hit circle (tighter than the sprite)
 const FEET = 17, HEAD = 15;    // ground / ceiling contact offsets from bird.y
 const CAP_W = 80, BODY_W = 64, CAP_H = 34;
 const U = 2.2;                 // hero sprite "pixel" size
-const BEST_KEY = 'ff7-flappy-best', MUTE_KEY = 'ff7-flappy-muted';
+const BEST_KEY = 'ff7-flappy-best', MUTE_KEY = 'ff7-flappy-muted', NAME_KEY = 'ff7-flappy-name';
 
 // Difficulty curve: everything keeps ramping with score (no early hard cap).
 const BASE_SPEED = 175, SPEED_PER_POINT = 4, SPEED_SOFT_CAP = 480;  // px/s scroll; soft cap only bites at score ~77+
@@ -31,6 +31,10 @@ const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 const stage = document.getElementById('stage');
 const muteBtn = document.getElementById('mute');
+const nameForm = document.getElementById('namebox');
+const nameInput = document.getElementById('nameinput');
+const nameSubmit = document.getElementById('namesubmit');
+const nameSkip = document.getElementById('nameskip');
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -49,6 +53,70 @@ function store(key, val) {
   try { if (val === undefined) return window.localStorage.getItem(key); window.localStorage.setItem(key, String(val)); } catch (e) { /* storage unavailable */ }
   return null;
 }
+
+// ------------------------------------------------------------------ global leaderboard (Supabase REST via plain fetch)
+// Self-contained on purpose (only needs fetch/AbortController/timers) so it can be unit-tested outside the browser.
+// <leaderboard>
+const LB = (() => {
+  const BASE = 'https://gfybimpuyzbwxhxhikpt.supabase.co/rest/v1/scores';
+  const KEY = 'sb_publishable_KIsjKLERCZHNllKXuOn1Uw_Ef9f3ADB';   // publishable (public) client key; never logged
+  const TOP_URL = BASE + '?select=name,score&order=score.desc,created_at.asc&limit=10';
+  const TIMEOUT_MS = 8000, NAME_MAX = 12, SCORE_MAX = 5000, TOP_N = 10;
+  const NAME_OK = /^[A-Za-z0-9 _.-]+$/;
+
+  // Strip disallowed characters and cap the length (used live while typing, so no trimming here).
+  const filterName = (s) => String(s == null ? '' : s).replace(/[^A-Za-z0-9 _.-]/g, '').slice(0, NAME_MAX);
+  // Final name for the POST: filtered + trimmed, 1..12 chars, allowed charset. null if unusable.
+  function cleanName(s) {
+    const n = filterName(s).trim();
+    return n.length >= 1 && n.length <= NAME_MAX && NAME_OK.test(n) ? n : null;
+  }
+  const validScore = (n) => typeof n === 'number' && Number.isInteger(n) && n >= 1 && n <= SCORE_MAX;
+
+  // One HTTP call. Never rejects and never throws: resolves {ok, status, data?}. Network errors, timeouts,
+  // non-2xx responses and unparsable bodies all come back as ok:false (callers treat that as "offline").
+  function request(method, url, extraHeaders, body) {
+    return new Promise((resolve) => {
+      let done = false, timer = null, ctrl = null;
+      const finish = (r) => { if (done) return; done = true; clearTimeout(timer); resolve(r); };
+      try { ctrl = typeof AbortController === 'function' ? new AbortController() : null; } catch (e) { ctrl = null; }
+      timer = setTimeout(() => { finish({ ok: false, status: 0 }); try { if (ctrl) ctrl.abort(); } catch (e) { /* ignore */ } }, TIMEOUT_MS);
+      try {
+        const opt = { method, headers: Object.assign({ apikey: KEY, Authorization: 'Bearer ' + KEY }, extraHeaders), cache: 'no-store', credentials: 'omit' };
+        if (body !== undefined) opt.body = body;
+        if (ctrl) opt.signal = ctrl.signal;
+        Promise.resolve(fetch(url, opt)).then((res) => {
+          if (!res || !res.ok) return finish({ ok: false, status: res ? res.status : 0 });
+          if (method !== 'GET') return finish({ ok: true, status: res.status });
+          return res.json().then((data) => finish({ ok: true, status: res.status, data }), () => finish({ ok: false, status: res.status }));
+        }).catch(() => finish({ ok: false, status: 0 }));
+      } catch (e) { finish({ ok: false, status: 0 }); }
+    });
+  }
+
+  // Top 10 as [{name, score}] (malformed rows dropped). Resolves {ok:true, rows} or {ok:false}.
+  function fetchTop() {
+    return request('GET', TOP_URL).then((r) => {
+      if (!r.ok || !Array.isArray(r.data)) return { ok: false };
+      const rows = [];
+      for (const x of r.data) {
+        if (x && typeof x.name === 'string' && Number.isInteger(x.score)) rows.push({ name: x.name.slice(0, NAME_MAX), score: x.score });
+      }
+      return { ok: true, rows: rows.slice(0, TOP_N) };
+    });
+  }
+
+  // Validates, then POSTs one row. Invalid input resolves {ok:false, invalid:true} WITHOUT any network call.
+  function submit(name, score) {
+    const n = cleanName(name);
+    if (n === null || !validScore(score)) return Promise.resolve({ ok: false, invalid: true });
+    return request('POST', BASE, { 'Content-Type': 'application/json', Prefer: 'return=minimal' }, JSON.stringify({ name: n, score }))
+      .then((r) => ({ ok: r.ok }));
+  }
+
+  return { NAME_MAX, SCORE_MAX, TOP_N, filterName, cleanName, validScore, fetchTop, submit };
+})();
+// </leaderboard>
 
 // ------------------------------------------------------------------ audio (Web Audio only, all synthesized)
 const Sfx = (() => {
@@ -140,6 +208,7 @@ const FONT = {};
     '!': '..#.. ..#.. ..#.. ..#.. ..#.. ..... ..#..', '?': '.###. #...# ....# ...#. ..#.. ..... ..#..',
     "'": '.##.. ..#.. .#... ..... ..... ..... .....', '-': '..... ..... ..... ##### ..... ..... .....',
     ':': '..... .##.. .##.. ..... .##.. .##.. .....', '/': '....# ...#. ...#. ..#.. .#... .#... #....',
+    _: '..... ..... ..... ..... ..... ..... #####',
   };
   for (const k in g) FONT[k] = g[k].split(' ');
 })();
@@ -208,6 +277,31 @@ let lastCenter = H * 0.42;
 const pipes = [];
 const particles = [];
 const bird = { x: 120, y: H * 0.42, vy: 0, rot: 0, flapT: 0 };
+
+// ---- leaderboard state
+// Per-run record. A score can only be submitted for the run that actually went ST_PLAY -> game over, using the score
+// frozen at the moment of death (run.final), and only once (run.submitted flips before the POST is even sent).
+let run = null, runSeq = 0;
+// Board cache: last successful list is kept and shown if a later fetch fails.
+const board = { rows: null, loading: false, failed: false, reqId: 0, lastTry: 0, awaitFresh: false };
+// Game-over flow: 'none' (not game over) -> 'wait' -> 'prompt' -> 'board'  (score 0 / ineligible runs go straight to 'board').
+const over = { phase: 'none', t0: 0 };
+// Name prompt (HTML overlay) state.
+const np = { open: false, busy: false, failed: false, msg: '', openedAt: 0, layoutKey: '' };
+const nowMs = () => (window.performance && performance.now ? performance.now() : Date.now());
+
+function refreshBoard() {
+  const id = ++board.reqId;
+  board.loading = true; board.lastTry = nowMs();
+  return LB.fetchTop().then((r) => {
+    if (id !== board.reqId) return;               // a newer request superseded this one
+    board.loading = false; board.awaitFresh = false;
+    if (r.ok) { board.rows = r.rows; board.failed = false; } else board.failed = true;
+  });
+}
+function canSubmit(r) {
+  return !!(r && r === run && r.played && r.over && !r.submitted && LB.validScore(r.final));
+}
 
 const FLAVORS = [
   "This isn't just a reprint of the game...",
@@ -479,7 +573,11 @@ function build() {
   motes = []; for (let i = 0; i < 26; i++) motes.push({ x: r() * W, y: r() * H, v: 8 + r() * 18, s: 1 + Math.floor(r() * 2), o: r() * 6 });
 }
 
+let lastVw = 0;
 function resize() {
+  // Legacy Android resizes the viewport when the soft keyboard opens; keep the layout steady while typing a name.
+  if (np.open && window.innerWidth === lastVw && nameForm.contains(document.activeElement)) return;
+  lastVw = window.innerWidth;
   const vw = Math.max(1, window.innerWidth), vh = Math.max(1, window.innerHeight);
   const newW = Math.round(clamp(vw / vh * H, MIN_W, MAX_W));
   let cw, ch;
@@ -647,6 +745,9 @@ function setPipeCenter(p) {
 }
 
 function resetRun() {
+  closePrompt();
+  over.phase = 'none';
+  run = { id: ++runSeq, played: false, over: false, final: 0, submitted: false, saved: false, failed: false, skipped: false, entry: null };
   pipes.length = 0;
   score = 0; newBest = false; scoreBump = 0;
   lvPulse = 0; lvFlash = 0; shownLevel = 1; pipeSeq = 0;
@@ -671,9 +772,21 @@ function flap() {
   emit(7, bird.x - 8, bird.y + 10, 8, 70, 0.45, 3);
 }
 
-function setState(s) { state = s; stateT = 0; }
+function setState(s) {
+  state = s; stateT = 0;
+  if (s === ST_PLAY && run) run.played = true;
+  if (s === ST_OVER) onGameOver();
+}
+
+// Game over reached: decide whether this run may ask for a name, and fetch a fresh board.
+function onGameOver() {
+  over.t0 = nowMs();
+  over.phase = canSubmit(run) ? 'wait' : 'board';
+  refreshBoard();
+}
 
 function die(hitGround) {
+  if (run && run.played && !run.over) { run.over = true; run.final = score; }   // score frozen at death
   Sfx.hit();
   shake = 0.35; flash = 0.55;
   if (score > best) { best = score; newBest = true; store(BEST_KEY, best); }
@@ -714,6 +827,7 @@ function update(dt) {
     bird.vy = Math.cos(time * 3.2) * 9 * 3.2;
     bird.rot = lerp(bird.rot, clamp(bird.vy * 0.004, -0.2, 0.2), Math.min(1, dt * 10));
     if (Math.floor(time * 4) % 2 === 0) bird.flapT = Math.max(bird.flapT, 0.05);
+    if (board.failed && !board.loading && nowMs() - board.lastTry > 15000) refreshBoard();   // quietly retry while idle on the title
   } else if (state === ST_PLAY) {
     speed = curSpeed();
     bird.vy = Math.min(MAX_FALL, bird.vy + GRAVITY * dt);
@@ -756,6 +870,8 @@ function update(dt) {
       emit(10, bird.x, bird.y + 10, 10, 120, 0.5, 3);
       setState(ST_OVER); Sfx.over();
     }
+  } else if (state === ST_OVER && over.phase === 'wait' && stateT > 0.6) {
+    if (canSubmit(run)) openPrompt(); else enterBoard();
   }
   scroll += speed * dt;
 
@@ -908,6 +1024,47 @@ function drawFanNote() {
   lines(l, W / 2, H - ph + (ph - l.length * 18 + 4) / 2, 2, '#9fd8c4', 18);
 }
 
+// ---- leaderboard drawing (shared by the title screen and the game-over window)
+const BOARD_ROW_H = 16, BOARD_ROWS_H = BOARD_ROW_H * 10;
+// Header (+ optional tags) and up to 10 rows, or a short status line while loading / offline. (x, y) = top-left of the
+// header; w = width. hi = row index to highlight (-1: none). hideRows: show the status instead of (stale) rows.
+function drawBoardList(x, y, w, hi, hideRows, rightText) {
+  const pad = 10, y0 = y + 20;
+  const rows = board.rows;
+  drawText('TOP 10', x + pad, y, 2, '#9fc4ff', 'left');
+  // Cached rows stay on screen when a later fetch fails: flag that in the header (it replaces the BEST tag).
+  // With no rows at all the status line in the middle already says OFFLINE.
+  if (board.failed && rows && rows.length) drawText('OFFLINE', x + w - pad, y, 2, '#ff9a8a', 'right');
+  else if (rightText) drawText(rightText, x + w - pad, y, 2, '#ffe27a', 'right');
+  if (!rows || hideRows || rows.length === 0) {
+    let msg, col = '#bfe8dc';
+    if (hideRows || (!rows && !board.failed)) { msg = 'RANKING...'; if (!blinkOn(2.5)) col = '#6f93a8'; }
+    else if (!rows) { msg = 'OFFLINE'; col = '#ff9a8a'; }
+    else msg = 'NO SCORES YET';
+    drawText(msg, x + w / 2, y0 + BOARD_ROWS_H / 2 - 14, 2, col, 'center');
+    if (!rows && board.failed && !hideRows) drawText('PLAY ANYWAY!', x + w / 2, y0 + BOARD_ROWS_H / 2 + 8, 2, '#9fc4ff', 'center');
+    return;
+  }
+  for (let i = 0; i < rows.length; i++) {
+    const ry = y0 + i * BOARD_ROW_H, r = rows[i], on = i === hi;
+    const col = on ? '#ffe27a' : i < 3 ? '#ffffff' : '#bcd4f0';
+    if (on) {
+      ctx.fillStyle = 'rgba(255,226,122,0.16)'; ctx.fillRect(x + 2, ry - 2, w - 4, BOARD_ROW_H);
+      ctx.fillStyle = '#ffe27a';   // little pointing-hand stand-in
+      ctx.fillRect(x + 2, ry + 1, 2, 12); ctx.fillRect(x + 4, ry + 3, 2, 8); ctx.fillRect(x + 6, ry + 5, 2, 4);
+    }
+    drawText(i + 1, x + pad + 22, ry, 2, col, 'right');
+    drawText(r.name, x + pad + 34, ry, 2, col, 'left');
+    drawText(r.score, x + w - pad, ry, 2, col, 'right');
+  }
+}
+
+function drawTitleBoard() {
+  const pw = Math.min(W - 24, 300), px = (W - pw) / 2, py = 334, ph = 196;
+  drawWindow(px, py, pw, ph, 1);
+  drawBoardList(px, py + 8, pw, -1, false, best > 0 ? 'BEST ' + best : '');
+}
+
 function drawTitleUI() {
   const bob = Math.sin(time * 2) * 3;
   const sc = fitScale('MIDGAR', 8, W - 40);
@@ -917,11 +1074,11 @@ function drawTitleUI() {
   drawMateria(W / 2 + textW('FLAP', sc) / 2 + 22, 66 + bob + sc * 7 + 12 + sc * 3.5, 9, '71,255,180');
   const sub = wrapText('An FF7-inspired fan game', 2, W - 30);
   lines(sub, W / 2, 66 + sc * 14 + 34, 2, '#bfe8dc', 18, { outline: OL });
+  drawTitleBoard();
   if (blinkOn(1.6)) {
-    const l = wrapText('Tap / Click / Space to flap', 2, W - 40);
-    lines(l, W / 2, 392, 2, '#ffffff', 20, { outline: OL });
+    const t = textW('TAP / CLICK / SPACE TO FLAP', 2) <= W - 24 ? 'TAP / CLICK / SPACE TO FLAP' : 'TAP OR SPACE TO FLAP';
+    drawText(t, W / 2, 544, 2, '#ffffff', 'center', { outline: OL });
   }
-  if (best > 0) drawText('BEST: ' + best, W / 2, 452, 2, '#ffe27a', 'center', { outline: OL });
   drawFanNote();
 }
 
@@ -942,32 +1099,72 @@ function drawHUD() {
   ctx.fillStyle = frac > 0.66 ? '#ff7a5a' : frac > 0.33 ? '#ffd35a' : '#47ffb4'; ctx.fillRect(bx, by, Math.max(2, bw * frac), 5);
 }
 
+// Short line under BEST on the game-over window: what happened to this run's score on the board.
+function resultLine() {
+  const r = run;
+  if (!r || r.final <= 0) return null;
+  if (r.saved) {
+    const i = board.rows && !board.awaitFresh ? board.rows.findIndex((x) => x.name === r.entry.name && x.score === r.entry.score) : -1;
+    if (i >= 0) return { text: 'YOUR RANK: ' + (i + 1), color: '#7dffc4', hi: i };
+    if (board.rows && !board.awaitFresh && !board.failed) return { text: 'NOT IN TOP 10', color: '#bfe8dc', hi: -1 };
+    return { text: 'SCORE SAVED!', color: '#7dffc4', hi: -1 };
+  }
+  if (r.failed) return { text: 'SUBMIT FAILED', color: '#ff9a8a', hi: -1 };
+  if (r.skipped) return { text: 'NOT SUBMITTED', color: '#bfe8dc', hi: -1 };
+  return null;
+}
+
 function drawOverUI() {
   const a = clamp(stateT / 0.35, 0, 1);
   ctx.fillStyle = `rgba(0,4,12,${0.55 * a})`; ctx.fillRect(0, 0, W, H);
   const pw = Math.min(W - 24, 340), px = (W - pw) / 2;
-  const slide = (1 - a) * 30;
-  const py = 110 + slide, ph = 372;
+  const py = 56 + (1 - a) * 30;
+  const cx = W / 2, inner = pw - 36;
+  const prompting = over.phase === 'wait' || over.phase === 'prompt';
+  const fl = prompting ? wrapText(flavor, 2, inner) : [];
+  const ph = prompting ? 350 + fl.length * 16 + 14 : 430;
   drawWindow(px, py, pw, ph, a);
   ctx.save();
   ctx.globalAlpha = a;
-  const cx = W / 2, inner = pw - 36;
   const gsc = fitScale('GAME OVER', 5, inner);
-  drawText('GAME OVER', cx, py + 28, gsc, '#ff6a5a', 'center', { outline: '#2a0a0e', shadow: 'rgba(0,0,0,0.4)' });
-  drawText('SCORE', cx, py + 90, 2, '#9fc4ff', 'center');
-  drawText(score, cx, py + 114, 6, '#ffffff', 'center', { outline: '#0a1430' });
+  drawText('GAME OVER', cx, py + 16, gsc, '#ff6a5a', 'center', { outline: '#2a0a0e', shadow: 'rgba(0,0,0,0.4)' });
+  drawText('SCORE', cx, py + 62, 2, '#9fc4ff', 'center');
+  drawText(score, cx, py + 86, 6, '#ffffff', 'center', { outline: '#0a1430' });
   if (score >= 5) {
     const rgb = score >= 40 ? '255,90,90' : score >= 25 ? '255,220,90' : score >= 15 ? '90,160,255' : '71,255,180';
-    drawMateria(px + 44, py + 135, 15, rgb);
+    drawMateria(px + 44, py + 107, 15, rgb);
   }
-  drawText('BEST', cx, py + 178, 2, '#9fc4ff', 'center');
-  drawText(best, cx, py + 200, 4, '#ffe27a', 'center', { outline: '#0a1430' });
-  if (newBest && blinkOn(3)) drawText('NEW BEST!', cx, py + 238, 2, '#7dffc4', 'center', { outline: '#0a1430' });
-  const fl = wrapText(flavor, 2, inner);
-  lines(fl, cx, py + 270, 2, '#bfe8dc', 18);
-  if (stateT > 0.5 && blinkOn(1.8)) {
-    const t = 'TAP TO TRY AGAIN';
-    drawText(t, cx, py + ph - 42, fitScale(t, 3, inner), '#ffffff', 'center', { outline: '#0a1430' });
+  const bt = 'BEST ' + best, bw = textW(bt, 2), nb = 'NEW BEST!';
+  const bx0 = newBest ? cx - (bw + 16 + textW(nb, 2)) / 2 : cx;
+  drawText(bt, bx0, py + 138, 2, '#ffe27a', newBest ? 'left' : 'center', { outline: '#0a1430' });
+  if (newBest && blinkOn(3)) drawText(nb, bx0 + bw + 16, py + 138, 2, '#7dffc4', 'left', { outline: '#0a1430' });
+
+  if (prompting) {
+    const bx = px + 14, by = py + 166, bwid = pw - 28, bh = 172;
+    if (over.phase === 'prompt') {
+      const ba = clamp((nowMs() - over.t0) / 250, 0, 1);
+      drawWindow(bx, by, bwid, bh, ba);
+      ctx.globalAlpha = ba;
+      drawText('ENTER YOUR NAME', bx + bwid / 2, by + 12, fitScale('ENTER YOUR NAME', 2, bwid - 20), '#9fc4ff', 'center');
+      const hint = coarsePointer ? 'TAP SUBMIT OR SKIP' : 'ENTER=OK  ESC=SKIP';
+      const msg = np.msg || hint;
+      const col = np.failed ? '#ff9a8a' : np.msg === 'ENTER A NAME' ? '#ffd35a' : np.msg ? '#ffffff' : '#7f9cc4';
+      drawText(msg, bx + bwid / 2, by + 144, fitScale(msg, 2, bwid - 16), col, 'center');
+      layoutPrompt({ x: bx, y: by, w: bwid, h: bh });
+      nameForm.style.opacity = ba;
+    }
+    ctx.globalAlpha = a;
+    lines(fl, cx, py + 350, 2, '#bfe8dc', 16);
+  } else {
+    const rl = resultLine();
+    if (rl) drawText(rl.text, cx, py + 158, 2, rl.color, 'center', { outline: '#0a1430' });
+    ctx.fillStyle = '#4a6fa0'; ctx.fillRect(px + 14, py + 180, pw - 28, 2);
+    const hideRows = board.awaitFresh && !!(run && run.saved);
+    drawBoardList(px + 14, py + 190, pw - 28, rl ? rl.hi : -1, hideRows);
+    if (stateT > 0.5 && blinkOn(1.8)) {
+      const t = 'TAP TO TRY AGAIN';
+      drawText(t, cx, py + ph - 42, fitScale(t, 3, inner), '#ffffff', 'center', { outline: '#0a1430' });
+    }
   }
   ctx.restore();
 }
@@ -1010,8 +1207,103 @@ function onAction() {
   if (paused) { paused = false; return; }
   if (state === ST_TITLE) { resetRun(); setState(ST_PLAY); flap(); }
   else if (state === ST_PLAY) flap();
-  else if (state === ST_OVER && stateT > 0.5) { resetRun(); setState(ST_PLAY); flap(); }
+  // Game over: never restart while the name prompt is (about to be) up; after it, wait a beat so a double-tap on
+  // SKIP/SUBMIT can't instantly launch the next run.
+  else if (state === ST_OVER && stateT > 0.5 && over.phase === 'board' && nowMs() - over.t0 > 400) { resetRun(); setState(ST_PLAY); flap(); }
 }
+
+// ---- name prompt (HTML <input> + buttons overlaid on the canvas; real input => mobile keyboards just work)
+const coarsePointer = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+function openPrompt() {
+  over.phase = 'prompt'; over.t0 = nowMs();
+  np.open = true; np.busy = false; np.failed = false; np.msg = ''; np.openedAt = nowMs(); np.layoutKey = '';
+  nameInput.value = LB.filterName(store(NAME_KEY) || '').trim();
+  nameInput.disabled = false; nameSubmit.disabled = false; nameSubmit.hidden = false; nameSkip.textContent = 'SKIP';
+  nameForm.hidden = false;
+  if (!coarsePointer) {   // on touch devices focusing programmatically would not raise the keyboard anyway
+    try { nameInput.focus({ preventScroll: true }); const n = nameInput.value.length; nameInput.setSelectionRange(n, n); } catch (e) { /* ignore */ }
+  }
+}
+function closePrompt() {
+  np.open = false; np.busy = false;
+  nameForm.hidden = true;
+  const ae = document.activeElement;
+  if (ae && nameForm.contains(ae)) ae.blur();
+}
+function enterBoard() { over.phase = 'board'; over.t0 = nowMs(); closePrompt(); }
+
+function skipName() {
+  if (!np.open) return;
+  if (run && !run.submitted) { run.skipped = true; run.submitted = true; }   // this run's chance is used up either way
+  enterBoard();
+}
+function submitName() {
+  if (!np.open || np.busy || nowMs() - np.openedAt < 350) return;
+  const r = run;
+  if (!canSubmit(r)) { enterBoard(); return; }
+  const name = LB.cleanName(nameInput.value);
+  if (!name) { np.msg = 'ENTER A NAME'; try { nameInput.focus(); } catch (e) { /* ignore */ } return; }
+  const sc = r.final;                       // the frozen score of THIS run, never user input
+  r.submitted = true; r.entry = { name, score: sc };
+  store(NAME_KEY, name);
+  np.busy = true; np.msg = 'SAVING...';
+  nameInput.disabled = true; nameSubmit.disabled = true;
+  LB.submit(name, sc).then((res) => {
+    const here = over.phase === 'prompt' && r === run;
+    if (res.ok) {
+      r.saved = true;
+      if (r === run) board.awaitFresh = true;
+      refreshBoard();                       // pull the new standings
+      if (here) enterBoard();
+    } else {
+      r.failed = true;
+      if (here) {
+        np.busy = false; np.failed = true; np.msg = 'FAILED / SKIP';
+        nameSubmit.hidden = true; nameSkip.textContent = 'CONTINUE'; np.layoutKey = '';
+      }
+    }
+  });
+}
+
+// Position the three DOM controls over the canvas box g (logical units).
+function layoutPrompt(g) {
+  const k = stage.clientWidth / W;          // CSS px per logical unit
+  const key = [g.x, g.y, g.w, g.h, k.toFixed(3), nameSubmit.hidden ? 1 : 0].join('|');
+  if (key === np.layoutKey) return;
+  np.layoutKey = key;
+  const put = (el, x, y, w, h, fs) => {
+    const st = el.style;
+    st.left = (x * k) + 'px'; st.top = (y * k) + 'px'; st.width = (w * k) + 'px'; st.height = (h * k) + 'px'; st.fontSize = fs + 'px';
+  };
+  put(nameInput, g.x + 12, g.y + 34, g.w - 24, 40, Math.max(16, 17 * k));
+  const bw = (g.w - 24 - 10) / 2, by = g.y + 86, bfs = Math.max(13, 14 * k);
+  if (nameSubmit.hidden) put(nameSkip, g.x + 12, by, g.w - 24, 44, bfs);
+  else { put(nameSubmit, g.x + 12, by, bw, 44, bfs); put(nameSkip, g.x + 12 + bw + 10, by, bw, 44, bfs); }
+}
+
+nameForm.addEventListener('submit', (e) => { e.preventDefault(); submitName(); });
+nameSkip.addEventListener('click', () => skipName());
+nameInput.addEventListener('input', () => {
+  if (nameInput.composing) return;
+  const v = nameInput.value, f = LB.filterName(v);
+  if (f !== v) {                            // drop disallowed characters, keep the caret where it was
+    const pos = nameInput.selectionStart == null ? v.length : nameInput.selectionStart;
+    nameInput.value = f;
+    const p = LB.filterName(v.slice(0, pos)).length;
+    try { nameInput.setSelectionRange(p, p); } catch (e) { /* ignore */ }
+  }
+  if (np.msg === 'ENTER A NAME') np.msg = '';
+});
+nameInput.addEventListener('compositionstart', () => { nameInput.composing = true; });
+nameInput.addEventListener('compositionend', () => { nameInput.composing = false; nameInput.dispatchEvent(new Event('input')); });
+// Keys typed in the prompt belong to the prompt: keep them away from the game's global shortcuts (Space/W/M/P ...).
+nameForm.addEventListener('keydown', (e) => {
+  e.stopPropagation();
+  if (nowMs() - np.openedAt < 500) { e.preventDefault(); return; }   // swallow flap-mashing from the run that just ended
+  if (e.key === 'Escape') { e.preventDefault(); if (!e.repeat) skipName(); }
+  else if (e.key === 'Enter' && e.target === nameInput) { e.preventDefault(); if (!e.repeat) submitName(); }   // (buttons keep native Enter/Space)
+});
+nameForm.addEventListener('keyup', (e) => e.stopPropagation());
 function togglePause() {
   if (state === ST_PLAY) paused = !paused;
   else if (paused) paused = false;
@@ -1028,6 +1320,12 @@ function updateMuteBtn() {
 function toggleMute() { Sfx.setMuted(!Sfx.isMuted()); updateMuteBtn(); }
 
 window.addEventListener('keydown', (e) => {
+  if (np.open) {   // keys outside the form while the prompt is up: Enter = submit, Esc = skip, nothing else may flap/restart
+    if (!e.repeat && nowMs() - np.openedAt > 500) {
+      if (e.code === 'Enter') { e.preventDefault(); submitName(); } else if (e.code === 'Escape') { e.preventDefault(); skipName(); }
+    }
+    return;
+  }
   if (e.code === 'Space' || e.key === ' ' || e.code === 'ArrowUp' || e.code === 'KeyW' || e.code === 'Enter') {
     e.preventDefault();
     if (!e.repeat) onAction();
@@ -1037,7 +1335,7 @@ window.addEventListener('keydown', (e) => {
 window.addEventListener('keyup', (e) => { if (e.code === 'Space') e.preventDefault(); }, { passive: false });
 
 document.addEventListener('pointerdown', (e) => {
-  if (e.target.closest && e.target.closest('#mute')) return;
+  if (e.target.closest && e.target.closest('#mute, #namebox')) return;
   if (e.pointerType === 'mouse' && e.button !== 0) return;
   e.preventDefault();
   onAction();
@@ -1065,6 +1363,7 @@ function frame(ts) {
 
 updateMuteBtn();
 resize();
+refreshBoard();   // title-screen standings
 bird.x = birdX();
 requestAnimationFrame(frame);
 })();

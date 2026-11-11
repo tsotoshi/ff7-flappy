@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-visual">
 <title>Midgar Flap – an FF7-inspired fan game</title>
 <meta name="description" content="Midgar Flap: a Flappy-Bird-style fan game with a spiky-haired mercenary, mako pipes and a night-time industrial skyline. Fan work, not affiliated with Square Enix.">
 <meta name="theme-color" content="#070a1c">
@@ -13,6 +13,13 @@
 <div id="stage">
   <canvas id="game" width="480" height="640" aria-label="Midgar Flap game. Press space, click or tap to flap."></canvas>
   <button id="mute" type="button" aria-label="Mute sound" title="Mute / unmute (M)"></button>
+  <!-- Leaderboard name prompt: positioned over the game-over window by game.js (hidden until needed) -->
+  <form id="namebox" hidden autocomplete="off" novalidate aria-label="Submit your score to the global leaderboard">
+    <input id="nameinput" type="text" maxlength="12" placeholder="YOUR NAME" aria-label="Your name for the leaderboard (letters, numbers, space, dot, dash, underscore; up to 12)"
+      autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false" enterkeyhint="done" inputmode="text">
+    <button id="namesubmit" type="submit">SUBMIT</button>
+    <button id="nameskip" type="button">SKIP</button>
+  </form>
 </div>
 <noscript><p class="nojs">Midgar Flap needs JavaScript enabled to run.</p></noscript>
 <script src="game.js"></script>
