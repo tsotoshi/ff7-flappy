@@ -73,7 +73,7 @@ body {
 }
 #namebox[hidden], #namebox [hidden] { display: none; }
 
-#nameinput, #namesubmit, #nameskip {
+#nameinput, #namesubmit, #namecontinue {
   position: absolute;
   box-sizing: border-box;
   pointer-events: auto;
@@ -103,7 +103,7 @@ body {
 #nameinput:focus { border-color: #ffe27a; box-shadow: 0 0 0 2px rgba(255, 226, 122, 0.3); }
 #nameinput:disabled { opacity: 0.6; }
 
-#namesubmit, #nameskip {
+#namesubmit, #namecontinue {
   color: #ffffff;
   background: linear-gradient(180deg, #1d4a96 0%, #0b1f55 100%);
   border: 2px solid #c9dcf0;
@@ -111,11 +111,10 @@ body {
   text-shadow: 1px 1px 0 #02061a;
   padding: 0;
 }
-#nameskip { color: #bcd4f0; background: linear-gradient(180deg, #162e63 0%, #081538 100%); }
-#namesubmit:hover, #nameskip:hover { border-color: #ffe27a; }
-#namesubmit:active, #nameskip:active { background: #0a1a44; }
-#namesubmit:focus-visible, #nameskip:focus-visible { outline: 2px solid #ffe27a; outline-offset: 2px; }
-#namesubmit:disabled { opacity: 0.55; cursor: default; }
+#namesubmit:hover:not(:disabled), #namecontinue:hover { border-color: #ffe27a; }
+#namesubmit:active:not(:disabled), #namecontinue:active { background: #0a1a44; }
+#namesubmit:focus-visible, #namecontinue:focus-visible { outline: 2px solid #ffe27a; outline-offset: 2px; }
+#namesubmit:disabled { opacity: 0.4; cursor: not-allowed; color: #8fa6c8; border-color: #5f7ca6; background: linear-gradient(180deg, #162e63 0%, #081538 100%); }
 
 .nojs {
   position: fixed;

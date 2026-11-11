@@ -34,7 +34,7 @@ const muteBtn = document.getElementById('mute');
 const nameForm = document.getElementById('namebox');
 const nameInput = document.getElementById('nameinput');
 const nameSubmit = document.getElementById('namesubmit');
-const nameSkip = document.getElementById('nameskip');
+const nameContinue = document.getElementById('namecontinue');
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -747,7 +747,7 @@ function setPipeCenter(p) {
 function resetRun() {
   closePrompt();
   over.phase = 'none';
-  run = { id: ++runSeq, played: false, over: false, final: 0, submitted: false, saved: false, failed: false, skipped: false, entry: null };
+  run = { id: ++runSeq, played: false, over: false, final: 0, submitted: false, saved: false, failed: false, entry: null };
   pipes.length = 0;
   score = 0; newBest = false; scoreBump = 0;
   lvPulse = 0; lvFlash = 0; shownLevel = 1; pipeSeq = 0;
@@ -1110,7 +1110,6 @@ function resultLine() {
     return { text: 'SCORE SAVED!', color: '#7dffc4', hi: -1 };
   }
   if (r.failed) return { text: 'SUBMIT FAILED', color: '#ff9a8a', hi: -1 };
-  if (r.skipped) return { text: 'NOT SUBMITTED', color: '#bfe8dc', hi: -1 };
   return null;
 }
 
@@ -1146,9 +1145,10 @@ function drawOverUI() {
       drawWindow(bx, by, bwid, bh, ba);
       ctx.globalAlpha = ba;
       drawText('ENTER YOUR NAME', bx + bwid / 2, by + 12, fitScale('ENTER YOUR NAME', 2, bwid - 20), '#9fc4ff', 'center');
-      const hint = coarsePointer ? 'TAP SUBMIT OR SKIP' : 'ENTER=OK  ESC=SKIP';
+      const okName = !!LB.cleanName(nameInput.value);
+      const hint = !okName ? 'ENTER A NAME (1-12)' : coarsePointer ? 'TAP SUBMIT' : 'ENTER=SUBMIT';
       const msg = np.msg || hint;
-      const col = np.failed ? '#ff9a8a' : np.msg === 'ENTER A NAME' ? '#ffd35a' : np.msg ? '#ffffff' : '#7f9cc4';
+      const col = np.failed ? '#ff9a8a' : (!np.msg && !okName) ? '#ffd35a' : np.msg ? '#ffffff' : '#7f9cc4';
       drawText(msg, bx + bwid / 2, by + 144, fitScale(msg, 2, bwid - 16), col, 'center');
       layoutPrompt({ x: bx, y: by, w: bwid, h: bh });
       nameForm.style.opacity = ba;
@@ -1208,7 +1208,7 @@ function onAction() {
   if (state === ST_TITLE) { resetRun(); setState(ST_PLAY); flap(); }
   else if (state === ST_PLAY) flap();
   // Game over: never restart while the name prompt is (about to be) up; after it, wait a beat so a double-tap on
-  // SKIP/SUBMIT can't instantly launch the next run.
+  // SUBMIT/CONTINUE can't instantly launch the next run.
   else if (state === ST_OVER && stateT > 0.5 && over.phase === 'board' && nowMs() - over.t0 > 400) { resetRun(); setState(ST_PLAY); flap(); }
 }
 
@@ -1218,7 +1218,8 @@ function openPrompt() {
   over.phase = 'prompt'; over.t0 = nowMs();
   np.open = true; np.busy = false; np.failed = false; np.msg = ''; np.openedAt = nowMs(); np.layoutKey = '';
   nameInput.value = LB.filterName(store(NAME_KEY) || '').trim();
-  nameInput.disabled = false; nameSubmit.disabled = false; nameSubmit.hidden = false; nameSkip.textContent = 'SKIP';
+  nameInput.disabled = false; nameSubmit.hidden = false; nameContinue.hidden = true;
+  syncSubmit();
   nameForm.hidden = false;
   if (!coarsePointer) {   // on touch devices focusing programmatically would not raise the keyboard anyway
     try { nameInput.focus({ preventScroll: true }); const n = nameInput.value.length; nameInput.setSelectionRange(n, n); } catch (e) { /* ignore */ }
@@ -1232,22 +1233,25 @@ function closePrompt() {
 }
 function enterBoard() { over.phase = 'board'; over.t0 = nowMs(); closePrompt(); }
 
-function skipName() {
-  if (!np.open) return;
-  if (run && !run.submitted) { run.skipped = true; run.submitted = true; }   // this run's chance is used up either way
+// Submit is only enabled while the typed name is valid (1-12 chars of A-Z a-z 0-9 space _ . -).
+function syncSubmit() { nameSubmit.disabled = np.busy || np.failed || !LB.cleanName(nameInput.value); }
+// Leave the name prompt for the board. Only reachable after a real submit attempt (success or failed save).
+function continueFromPrompt() {
+  if (!np.open || !np.failed) return;
   enterBoard();
 }
 function submitName() {
   if (!np.open || np.busy || nowMs() - np.openedAt < 350) return;
+  if (np.failed) { continueFromPrompt(); return; }
   const r = run;
-  if (!canSubmit(r)) { enterBoard(); return; }
+  if (!canSubmit(r)) { enterBoard(); return; }          // run already submitted/stale: nothing left to ask
   const name = LB.cleanName(nameInput.value);
-  if (!name) { np.msg = 'ENTER A NAME'; try { nameInput.focus(); } catch (e) { /* ignore */ } return; }
+  if (!name) { syncSubmit(); try { nameInput.focus(); } catch (e) { /* ignore */ } return; }   // invalid: never POST
   const sc = r.final;                       // the frozen score of THIS run, never user input
   r.submitted = true; r.entry = { name, score: sc };
   store(NAME_KEY, name);
   np.busy = true; np.msg = 'SAVING...';
-  nameInput.disabled = true; nameSubmit.disabled = true;
+  nameInput.disabled = true; syncSubmit();
   LB.submit(name, sc).then((res) => {
     const here = over.phase === 'prompt' && r === run;
     if (res.ok) {
@@ -1258,14 +1262,15 @@ function submitName() {
     } else {
       r.failed = true;
       if (here) {
-        np.busy = false; np.failed = true; np.msg = 'FAILED / SKIP';
-        nameSubmit.hidden = true; nameSkip.textContent = 'CONTINUE'; np.layoutKey = '';
+        np.busy = false; np.failed = true; np.msg = "COULDN'T SAVE SCORE";
+        nameSubmit.hidden = true; nameContinue.hidden = false; syncSubmit(); np.layoutKey = '';
+        try { nameContinue.focus({ preventScroll: true }); } catch (e) { /* ignore */ }
       }
     }
   });
 }
 
-// Position the three DOM controls over the canvas box g (logical units).
+// Position the DOM controls over the canvas box g (logical units).
 function layoutPrompt(g) {
   const k = stage.clientWidth / W;          // CSS px per logical unit
   const key = [g.x, g.y, g.w, g.h, k.toFixed(3), nameSubmit.hidden ? 1 : 0].join('|');
@@ -1276,13 +1281,13 @@ function layoutPrompt(g) {
     st.left = (x * k) + 'px'; st.top = (y * k) + 'px'; st.width = (w * k) + 'px'; st.height = (h * k) + 'px'; st.fontSize = fs + 'px';
   };
   put(nameInput, g.x + 12, g.y + 34, g.w - 24, 40, Math.max(16, 17 * k));
-  const bw = (g.w - 24 - 10) / 2, by = g.y + 86, bfs = Math.max(13, 14 * k);
-  if (nameSubmit.hidden) put(nameSkip, g.x + 12, by, g.w - 24, 44, bfs);
-  else { put(nameSubmit, g.x + 12, by, bw, 44, bfs); put(nameSkip, g.x + 12 + bw + 10, by, bw, 44, bfs); }
+  const by = g.y + 86, bfs = Math.max(13, 14 * k);
+  if (nameSubmit.hidden) put(nameContinue, g.x + 12, by, g.w - 24, 44, bfs);
+  else put(nameSubmit, g.x + 12, by, g.w - 24, 44, bfs);
 }
 
 nameForm.addEventListener('submit', (e) => { e.preventDefault(); submitName(); });
-nameSkip.addEventListener('click', () => skipName());
+nameContinue.addEventListener('click', () => continueFromPrompt());
 nameInput.addEventListener('input', () => {
   if (nameInput.composing) return;
   const v = nameInput.value, f = LB.filterName(v);
@@ -1292,7 +1297,7 @@ nameInput.addEventListener('input', () => {
     const p = LB.filterName(v.slice(0, pos)).length;
     try { nameInput.setSelectionRange(p, p); } catch (e) { /* ignore */ }
   }
-  if (np.msg === 'ENTER A NAME') np.msg = '';
+  syncSubmit();
 });
 nameInput.addEventListener('compositionstart', () => { nameInput.composing = true; });
 nameInput.addEventListener('compositionend', () => { nameInput.composing = false; nameInput.dispatchEvent(new Event('input')); });
@@ -1300,7 +1305,7 @@ nameInput.addEventListener('compositionend', () => { nameInput.composing = false
 nameForm.addEventListener('keydown', (e) => {
   e.stopPropagation();
   if (nowMs() - np.openedAt < 500) { e.preventDefault(); return; }   // swallow flap-mashing from the run that just ended
-  if (e.key === 'Escape') { e.preventDefault(); if (!e.repeat) skipName(); }
+  if (e.key === 'Escape') e.preventDefault();   // Esc does nothing here: a name must be submitted
   else if (e.key === 'Enter' && e.target === nameInput) { e.preventDefault(); if (!e.repeat) submitName(); }   // (buttons keep native Enter/Space)
 });
 nameForm.addEventListener('keyup', (e) => e.stopPropagation());
@@ -1320,10 +1325,9 @@ function updateMuteBtn() {
 function toggleMute() { Sfx.setMuted(!Sfx.isMuted()); updateMuteBtn(); }
 
 window.addEventListener('keydown', (e) => {
-  if (np.open) {   // keys outside the form while the prompt is up: Enter = submit, Esc = skip, nothing else may flap/restart
-    if (!e.repeat && nowMs() - np.openedAt > 500) {
-      if (e.code === 'Enter') { e.preventDefault(); submitName(); } else if (e.code === 'Escape') { e.preventDefault(); skipName(); }
-    }
+  if (np.open) {   // keys outside the form while the prompt is up: Enter = submit (or continue after a failed save); nothing else may flap or restart
+    if (e.code === 'Escape' || e.code === 'Space') e.preventDefault();
+    if (!e.repeat && nowMs() - np.openedAt > 500 && e.code === 'Enter') { e.preventDefault(); submitName(); }
     return;
   }
   if (e.code === 'Space' || e.key === ' ' || e.code === 'ArrowUp' || e.code === 'KeyW' || e.code === 'Enter') {
