@@ -17,7 +17,7 @@ mercenary glides through the mako-lit ducts and reactor pipes of a smoggy, indus
 
 - Fly through the gaps in the mako ducts. Each pipe pair you clear scores **+1**.
 - Hitting a pipe or the ground ends the run. Tap again to retry.
-- The game gets gradually faster and the gaps gradually tighter, then levels off.
+- The game never stops ramping up: scroll speed rises every point, gaps and pipe spacing tighten, and from score 15 some pipes start moving. `LV` (top-left) ticks up every 5 points.
 - Your best score is saved in `localStorage` under `ff7-flappy-best`; the mute setting is saved too.
 
 ## Run locally

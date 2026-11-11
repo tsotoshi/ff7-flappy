@@ -16,6 +16,15 @@ const CAP_W = 80, BODY_W = 64, CAP_H = 34;
 const U = 2.2;                 // hero sprite "pixel" size
 const BEST_KEY = 'ff7-flappy-best', MUTE_KEY = 'ff7-flappy-muted';
 
+// Difficulty curve: everything keeps ramping with score (no early hard cap).
+const BASE_SPEED = 175, SPEED_PER_POINT = 4, SPEED_SOFT_CAP = 480;  // px/s scroll; soft cap only bites at score ~77+
+const GAP_START = 180, GAP_SHRINK = 1.6, GAP_MIN = 124;             // gap hits its minimum at score ~35
+const SPACE_START = 240, SPACE_SHRINK = 1.2, SPACE_MIN = 188;       // spacing tightens, hits min at score ~43
+const MOVE_FROM = 15;                                               // moving pipes appear at this score
+const AMP_START = 28, AMP_MAX = 48, FREQ_START = 1.2, FREQ_MAX = 2.4, MOVE_RAMP = 45; // amp px, freq rad/s, ramp length in points
+const LEVEL_EVERY = 5;
+const MAX_CENTER_STEP = 150, MIN_CENTER_STEP = 50, CLIMB_PX_PER_SEC = 250; // limits on centre change between neighbouring pipes
+
 const ST_TITLE = 0, ST_PLAY = 1, ST_DYING = 2, ST_OVER = 3;
 
 const canvas = document.getElementById('game');
@@ -98,6 +107,7 @@ const Sfx = (() => {
     unlock, setMuted,
     isMuted: () => muted,
     flap() { tone(300, 640, 0.09, 'square', 0.09); noise(0.07, 0.07, 'highpass', 2500, 5000); },
+    level() { [523, 659, 784, 1047].forEach((f, i) => tone(f, f * 1.01, 0.11, 'square', 0.1, i * 0.065)); },
     score() { tone(880, 880, 0.08, 'triangle', 0.2); tone(1318, 1318, 0.18, 'triangle', 0.18, 0.07); },
     hit() { noise(0.35, 0.5, 'lowpass', 2200, 160); tone(170, 45, 0.3, 'sawtooth', 0.25); },
     over() { [440, 392, 349, 294].forEach((f, i) => tone(f, f * 0.99, 0.2, 'triangle', 0.16, 0.3 + i * 0.16)); },
@@ -187,11 +197,12 @@ function drawText(str, x, y, sc, color, align, opt) {
 }
 
 // ------------------------------------------------------------------ state
-let W = 480, S = 1, dpr = 1;
+let W = 480, S = 1, dpr = 1, uiK = 1;   // uiK = logical units per CSS px (to clear the HTML mute button)
 let state = ST_TITLE, stateT = 0, time = 0, scroll = 0;
 let paused = false;
 let score = 0, best = parseInt(store(BEST_KEY), 10) || 0, newBest = false;
 let scoreBump = 0, shake = 0, flash = 0;
+let lvPulse = 0, lvFlash = 0, shownLevel = 1, pipeSeq = 0;  // level-up effects, spawn counter
 let flavor = '';
 let lastCenter = H * 0.42;
 const pipes = [];
@@ -209,7 +220,24 @@ const FLAVORS = [
 ];
 
 const birdX = () => clamp(W * 0.28, 96, 190);
-const curSpeed = () => Math.min(235, 150 + score * 3.5);
+const curSpeed = () => Math.min(SPEED_SOFT_CAP, BASE_SPEED + score * SPEED_PER_POINT);
+const curGap = () => Math.max(GAP_MIN, GAP_START - score * GAP_SHRINK);
+const curSpacing = () => Math.max(SPACE_MIN, SPACE_START - score * SPACE_SHRINK);
+const curLevel = () => Math.floor(score / LEVEL_EVERY) + 1;
+const moveT = () => clamp((score - MOVE_FROM) / MOVE_RAMP, 0, 1);       // 0 at score 15 -> 1 at score 60
+const curAmp = () => lerp(AMP_START, AMP_MAX, moveT());
+const curFreq = () => lerp(FREQ_START, FREQ_MAX, moveT());
+const moveEvery = () => (score >= 30 ? 2 : 3);                           // every 3rd pipe, then every 2nd
+const canMove = () => score >= MOVE_FROM;
+// Largest allowed centre jump between neighbouring pipes. Fairness: the time you have to get from one gap to the next
+// is the "clear flight" distance (spacing minus cap width minus hit diameter) divided by speed. Allow what a hero can
+// climb in that time (~250 px/s with brisk tapping) plus ~80% of the slack inside the gap, minus a full swing when
+// pipes can move. Capped at the old 150 px, never below 50.
+const curCenterStep = () => {
+  const tClear = (curSpacing() - CAP_W - 2 * HIT_R) / curSpeed();
+  const step = CLIMB_PX_PER_SEC * tClear + 0.8 * (curGap() / 2 - HIT_R) - (canMove() ? curAmp() : 0);
+  return clamp(step, MIN_CENTER_STEP, MAX_CENTER_STEP);
+};
 
 // ------------------------------------------------------------------ cached art (rebuilt on resize)
 let skyC = null, vignette = null, stars = [], motes = [];
@@ -462,7 +490,7 @@ function resize() {
   const newS = cw * dpr / newW;
   const cwPx = Math.round(newW * newS), chPx = Math.round(H * newS);
   const changed = newW !== W || Math.abs(newS - S) > 0.001 || canvas.width !== cwPx || canvas.height !== chPx;
-  W = newW; S = newS;
+  W = newW; S = newS; uiK = newW / cw;
   if (changed) {
     canvas.width = cwPx; canvas.height = chPx;
     EPS = 0.75 / S;
@@ -596,18 +624,32 @@ function drawPipe(p) {
 
 // ------------------------------------------------------------------ gameplay
 function spawnPipe(x) {
-  const gap = Math.max(138, 184 - score * 2);
-  const lo = 64 + gap / 2, hi = GROUND_Y - 64 - gap / 2;
-  let c = lo + Math.random() * (hi - lo);
-  c = clamp(c, lastCenter - 150, lastCenter + 150);
-  c = clamp(c, lo, hi);
+  const gap = curGap();
+  const lo = 64 + gap / 2, hi = GROUND_Y - 64 - gap / 2;   // legal range for the gap centre
+  const moving = canMove() && pipeSeq++ % moveEvery() === 0;
+  // a moving pipe keeps its whole swing inside [lo, hi] by centring the swing further from the edges
+  const amp = moving ? Math.min(curAmp(), (hi - lo) / 2) : 0;
+  const cLo = lo + amp, cHi = hi - amp;
+  let c = cLo + Math.random() * (cHi - cLo);
+  const step = curCenterStep();
+  c = clamp(c, lastCenter - step, lastCenter + step);
+  c = clamp(c, cLo, cHi);
+  const pipe = { x, top: c - gap / 2, bot: c + gap / 2, gap, scored: false, moving, base: c, amp, freq: moving ? curFreq() : 0,
+    phase: moving ? Math.random() * Math.PI * 2 : 0, lo, hi };
+  if (moving) setPipeCenter(pipe);
   lastCenter = c;
-  pipes.push({ x, top: c - gap / 2, bot: c + gap / 2, scored: false });
+  pipes.push(pipe);
+}
+// Moving pipes: gap centre follows a sine around p.base; top/bot (caps included) are derived from it every update.
+function setPipeCenter(p) {
+  const c = clamp(p.base + p.amp * Math.sin(p.phase), p.lo, p.hi);
+  p.top = c - p.gap / 2; p.bot = c + p.gap / 2;
 }
 
 function resetRun() {
   pipes.length = 0;
   score = 0; newBest = false; scoreBump = 0;
+  lvPulse = 0; lvFlash = 0; shownLevel = 1; pipeSeq = 0;
   bird.x = birdX(); bird.y = H * 0.42; bird.vy = 0; bird.rot = 0; bird.flapT = 0;
   lastCenter = bird.y;
   spawnPipe(Math.min(W + 60, bird.x + 420));
@@ -660,6 +702,8 @@ function update(dt) {
   if (scoreBump > 0) scoreBump = Math.max(0, scoreBump - dt * 4);
   if (shake > 0) shake = Math.max(0, shake - dt);
   if (flash > 0) flash = Math.max(0, flash - dt * 2.2);
+  if (lvPulse > 0) lvPulse = Math.max(0, lvPulse - dt * 2.5);   // ~0.4s
+  if (lvFlash > 0) lvFlash = Math.max(0, lvFlash - dt * 4);
   bird.flapT = Math.max(0, bird.flapT - dt);
 
   let speed = 0;
@@ -677,9 +721,12 @@ function update(dt) {
     if (bird.y - HEAD < 0) { bird.y = HEAD; if (bird.vy < 0) bird.vy = 0; }
     bird.rot = lerp(bird.rot, clamp(bird.vy * 0.0019, -0.45, 1.15), Math.min(1, dt * 12));
 
-    for (const p of pipes) p.x -= speed * dt;
+    for (const p of pipes) {
+      p.x -= speed * dt;
+      if (p.moving) { p.phase += p.freq * dt; setPipeCenter(p); }
+    }
     while (pipes.length && pipes[0].x + CAP_W < -30) pipes.shift();
-    const spacing = 250 + (speed - 150) * 0.8;
+    const spacing = curSpacing();   // score-based: pipes get closer together as you progress
     let last = pipes[pipes.length - 1];
     while (!last || last.x + spacing <= W + 60) {
       spawnPipe(last ? last.x + spacing : W + 60);
@@ -693,7 +740,9 @@ function update(dt) {
     if (state === ST_PLAY) {
       for (const p of pipes) {
         if (!p.scored && p.x + CAP_W / 2 < bird.x) {
-          p.scored = true; score++; scoreBump = 1; Sfx.score();
+          p.scored = true; score++; scoreBump = 1;
+          if (curLevel() > shownLevel) { shownLevel = curLevel(); lvPulse = 1; lvFlash = 1; Sfx.level(); }
+          else Sfx.score();
         }
       }
       if (Math.random() < dt * 22) emit(1, bird.x - 14, bird.y + 6, 4, 20, 0.5, 2);
@@ -880,6 +929,17 @@ function drawHUD() {
   const sc = 8;
   drawText(score, W / 2, 40 - scoreBump * 6, sc, '#ffffff', 'center', { outline: OL, shadow: 'rgba(0,255,170,0.35)' });
   drawText('BEST ' + best, 12, 14, 2, '#bfe8dc', 'left', { outline: OL });
+  // LV label: top-right, directly below the HTML mute button (48 CSS px incl. margin), opposite BEST. The hero lives on
+  // the left, so a wide label can never sit on it; it pulses/scales on level-up.
+  const lsc = lvPulse > 0.45 ? 4 : 3;
+  const right = W - 12, ly = Math.round(48 * uiK) + 6;
+  drawText('LV ' + curLevel(), right, ly, lsc, lvPulse > 0 ? '#ffffff' : '#8dffd2', 'right', { outline: OL, shadow: lvPulse > 0 ? 'rgba(0,255,170,0.6)' : undefined });
+  // speed cue: thin meter from base speed to soft cap
+  const bw = 54, frac = clamp((curSpeed() - BASE_SPEED) / (SPEED_SOFT_CAP - BASE_SPEED), 0, 1);
+  const by = ly + 7 * 4 + 6, bx = right - bw;
+  ctx.fillStyle = OL; ctx.fillRect(bx - 1, by - 1, bw + 2, 7);
+  ctx.fillStyle = '#10303a'; ctx.fillRect(bx, by, bw, 5);
+  ctx.fillStyle = frac > 0.66 ? '#ff7a5a' : frac > 0.33 ? '#ffd35a' : '#47ffb4'; ctx.fillRect(bx, by, Math.max(2, bw * frac), 5);
 }
 
 function drawOverUI() {
@@ -940,6 +1000,7 @@ function render() {
   else if (state === ST_PLAY || state === ST_DYING) drawHUD();
   else if (state === ST_OVER) { drawHUD(); drawOverUI(); }
   if (paused) drawPaused();
+  if (lvFlash > 0 && state === ST_PLAY) { ctx.fillStyle = `rgba(110,255,200,${lvFlash * 0.16})`; ctx.fillRect(0, 0, W, H); }
   if (flash > 0) { ctx.fillStyle = `rgba(255,255,255,${flash * 0.7})`; ctx.fillRect(0, 0, W, H); }
 }
 
