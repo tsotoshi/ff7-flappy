@@ -58,7 +58,7 @@ function store(key, val) {
 // Self-contained on purpose (only needs fetch/AbortController/timers) so it can be unit-tested outside the browser.
 // <leaderboard>
 const LB = (() => {
-  const BASE = 'https://gfybimpuyzbwxhxhikpt.supabase.co/rest/v1/scores';
+  const BASE = 'https://gfybimpuyzbwxhxhikpt.supabase.co/rest/v1/flap_scores';
   const KEY = 'sb_publishable_KIsjKLERCZHNllKXuOn1Uw_Ef9f3ADB';   // publishable (public) client key; never logged
   const TOP_URL = BASE + '?select=name,score&order=score.desc,created_at.asc&limit=10';
   const TIMEOUT_MS = 8000, NAME_MAX = 12, SCORE_MAX = 5000, TOP_N = 10;

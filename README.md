@@ -17,22 +17,10 @@ mercenary glides through the mako-lit ducts and reactor pipes of a smoggy, indus
 
 - Fly through the gaps in the mako ducts. Each pipe pair you clear scores **+1**.
 - Hitting a pipe or the ground ends the run. Tap again to retry.
-- The game never stops ramping up: scroll speed rises every point, gaps and pipe spacing tighten, and from score 15 some pipes start moving. `LV` (top-left) ticks up every 5 points.
+- The game never stops ramping up: scroll speed rises every point, gaps and pipe spacing tighten, and from score 15 some pipes start moving. `LV` (top-right, under the mute button) ticks up every 5 points.
 - Your best score is saved in `localStorage` under `ff7-flappy-best`; the mute setting is saved too.
 
-## Global leaderboard
-
-The title screen shows the **global top 10**, and after a run that scored at least 1 you can enter a name
-(letters, digits, space, `. _ -`, up to 12 characters) to submit your score; **Enter** submits, **Esc** skips, and
-**Skip** / **Submit** also work by tap or click. Your last-used name is remembered in `localStorage` (`ff7-flappy-name`).
-Each run can be submitted once.
-
-- It is backed by a small Supabase table, read and written with plain `fetch` calls to the Supabase REST API
-  (`game.js`, search for `// <leaderboard>`). No client library, no build step.
-- It **needs a network connection**. Offline (or if the API errors or times out after 8 s) the board shows `OFFLINE`,
-  the last successfully loaded list is kept, and the game stays fully playable.
-- The key in `game.js` is Supabase's *publishable* (public) key; access is limited to reading and inserting rows by
-  row-level security. Because the game is client-side code, scores are not tamper-proof; treat the board as for fun.
+leaderboard: games project, tables flap_scores
 
 ## Run locally
 
