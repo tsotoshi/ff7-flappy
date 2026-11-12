@@ -15,7 +15,7 @@ mercenary glides through the mako-lit ducts and reactor pipes of a smoggy, indus
 | Mute / unmute | the speaker button (top-right) or `M` |
 | Pause | `P` or `Esc` (also auto-pauses when the tab loses focus) |
 
-- Pick your hero from the title screen: tap/click **CHARACTERS** (top-left) or press `C`, then use arrow keys / swipe / tap a portrait and confirm with `Enter`, a second tap or **OK** (`Esc` / **BACK** cancels). The ten heroes are cosmetic only, and your last pick is remembered (`ff7-flappy-char`).
+- Pick your hero from the title screen: tap/click **CHARACTERS** (top-left) or press `C`, then use arrow keys / swipe / tap a portrait and confirm with `Enter`, a second tap or **OK** (`Esc` / **BACK** cancels). **CHARACTERS** is also on the game-over screen, so you can switch hero between runs. The ten heroes are cosmetic only, and your last pick is remembered (`ff7-flappy-char`).
 - Fly through the gaps in the mako ducts. Each pipe pair you clear scores **+1**.
 - Hitting a pipe or the ground ends the run. Tap again to retry.
 - The game never stops ramping up: scroll speed rises every point, gaps and pipe spacing tighten, and from score 15 some pipes start moving. `LV` (top-right, under the mute button) ticks up every 5 points.

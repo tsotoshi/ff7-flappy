@@ -825,8 +825,24 @@ function toLogical(e) {
   if (!r.width || !r.height) return null;
   return { x: (e.clientX - r.left) / r.width * W, y: (e.clientY - r.top) / r.height * H };
 }
-function openSelect() { if (state !== ST_TITLE) return; selIdx = charIndex(selChar); selDown = null; setState(ST_SELECT); }
-function closeSelect() { selDown = null; if (state === ST_SELECT) setState(ST_TITLE); }          // never starts a run
+// Game-over board CHARACTERS button (final panel position; only live once the panel has slid in, so stateT > 0.5).
+const overPanel = () => { const pw = Math.min(W - 24, 340); return { px: (W - pw) / 2, py: 56, pw, ph: 472 }; };
+const overCharBtn = () => { const p = overPanel(); return { x: p.px + (p.pw - 200) / 2, y: p.py + 414, w: 200, h: 44 }; };
+const overCharBtnHit = () => padRect(overCharBtn(), 8);
+const overBoardReady = () => state === ST_OVER && over.phase === 'board' && !np.open && stateT > 0.5;
+let selFrom = ST_TITLE;   // where character select was opened from (title or game-over board)
+function openSelect() {
+  if (np.open) return;
+  if (state === ST_OVER) { if (over.phase !== 'board') return; }
+  else if (state !== ST_TITLE) return;
+  selFrom = state; selIdx = charIndex(selChar); selDown = null; setState(ST_SELECT);
+}
+function closeSelect() {            // never starts a run
+  selDown = null;
+  if (state !== ST_SELECT) return;
+  if (selFrom === ST_OVER) { state = ST_OVER; stateT = 1; over.t0 = nowMs(); }   // straight back to the board: no onGameOver(), score/board kept
+  else setState(ST_TITLE);
+}
 function confirmSelect() {
   selChar = CHAR_IDS[selIdx]; store(CHAR_KEY, selChar);
   closeSelect();
@@ -1358,7 +1374,7 @@ function drawOverUI() {
   const cx = W / 2, inner = pw - 36;
   const prompting = over.phase === 'wait' || over.phase === 'prompt';
   const fl = prompting ? wrapText(flavor, 2, inner) : [];
-  const ph = prompting ? 350 + fl.length * 16 + 14 : 430;
+  const ph = prompting ? 350 + fl.length * 16 + 14 : overPanel().ph;
   drawWindow(px, py, pw, ph, a);
   ctx.save();
   ctx.globalAlpha = a;
@@ -1400,8 +1416,10 @@ function drawOverUI() {
     drawBoardList(px + 14, py + 190, pw - 28, rl ? rl.hi : -1, hideRows);
     if (stateT > 0.5 && blinkOn(1.8)) {
       const t = 'TAP TO TRY AGAIN';
-      drawText(t, cx, py + ph - 42, fitScale(t, 3, inner), '#ffffff', 'center', { outline: '#0a1430' });
+      drawText(t, cx, py + 384, fitScale(t, 3, inner), '#ffffff', 'center', { outline: '#0a1430' });
     }
+    const cb = overCharBtn();
+    drawMenuBtn(cb, 'CHARACTERS', false);
   }
   ctx.restore();
 }
@@ -1570,7 +1588,7 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   if (state === ST_SELECT) { selKey(e); return; }
-  if (e.code === 'KeyC' && state === ST_TITLE) { e.preventDefault(); if (!e.repeat) openSelect(); return; }
+  if (e.code === 'KeyC' && (state === ST_TITLE || overBoardReady())) { e.preventDefault(); if (!e.repeat) openSelect(); return; }
   if (e.code === 'Space' || e.key === ' ' || e.code === 'ArrowUp' || e.code === 'KeyW' || e.code === 'Enter') {
     e.preventDefault();
     if (!e.repeat) onAction();
@@ -1586,6 +1604,7 @@ document.addEventListener('pointerdown', (e) => {
   const pt = toLogical(e);
   if (state === ST_SELECT) { selDown = { x: e.clientX, y: e.clientY, id: e.pointerId }; return; }
   if (state === ST_TITLE && pt && inRect(pt.x, pt.y, charBtnHit())) { Sfx.unlock(); openSelect(); return; }
+  if (pt && overBoardReady() && inRect(pt.x, pt.y, overCharBtnHit())) { Sfx.unlock(); openSelect(); return; }
   onAction();
 }, { passive: false });
 document.addEventListener('pointerup', (e) => {
