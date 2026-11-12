@@ -14,7 +14,7 @@ const HIT_R = 13, HIT_OY = -4; // hit circle (tighter than the sprite)
 const FEET = 17, HEAD = 15;    // ground / ceiling contact offsets from bird.y
 const CAP_W = 80, BODY_W = 64, CAP_H = 34;
 const U = 2.2;                 // hero sprite "pixel" size
-const BEST_KEY = 'ff7-flappy-best', MUTE_KEY = 'ff7-flappy-muted', NAME_KEY = 'ff7-flappy-name';
+const BEST_KEY = 'ff7-flappy-best', MUTE_KEY = 'ff7-flappy-muted', NAME_KEY = 'ff7-flappy-name', CHAR_KEY = 'ff7-flappy-char';
 
 // Difficulty curve: everything keeps ramping with score (no early hard cap).
 const BASE_SPEED = 175, SPEED_PER_POINT = 4, SPEED_SOFT_CAP = 480;  // px/s scroll; soft cap only bites at score ~77+
@@ -25,7 +25,7 @@ const AMP_START = 28, AMP_MAX = 48, FREQ_START = 1.2, FREQ_MAX = 2.4, MOVE_RAMP 
 const LEVEL_EVERY = 5;
 const MAX_CENTER_STEP = 150, MIN_CENTER_STEP = 50, CLIMB_PX_PER_SEC = 250; // limits on centre change between neighbouring pipes
 
-const ST_TITLE = 0, ST_PLAY = 1, ST_DYING = 2, ST_OVER = 3;
+const ST_TITLE = 0, ST_PLAY = 1, ST_DYING = 2, ST_OVER = 3, ST_SELECT = 4;
 
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
@@ -276,6 +276,9 @@ let flavor = '';
 let lastCenter = H * 0.42;
 const pipes = [];
 const particles = [];
+// Character select. selChar = saved pick (shown on the title); playChar = locked in when a run starts; selIdx = cursor.
+// (Character is local only: the leaderboard table has no character column, so it is never sent to Supabase.)
+let selChar = 'cloud', playChar = 'cloud', selIdx = 0, selDown = null;
 const bird = { x: 120, y: H * 0.42, vy: 0, rot: 0, flapT: 0 };
 
 // ---- leaderboard state
@@ -603,10 +606,7 @@ const C = {
   navy: '#2c3b6e', navyL: '#4258a0', navyD: '#1d284d', sil: '#c3ccd9', silH: '#eef3f8', silS: '#7d889d',
   brn: '#6b4426', brnD: '#472c18', blade: '#dfe7f1', bladeS: '#8d9ab0', mako: '#6bfff0', gold: '#e3bf5a', out: '#130f26',
 };
-const heroCache = {};
-function heroParts(pose, e, dead) {
-  const key = pose * 3 + e + 1 + (dead ? 6 : 0);
-  if (heroCache[key]) return heroCache[key];
+function cloudParts(pose, e, dead) {
   const P = [];
   const a = (x, y, w, h, c) => P.push([x, y, w, h, c]);
   // sword slung on the back (drawn first = behind)
@@ -643,21 +643,256 @@ function heroParts(pose, e, dead) {
   a(-3, -14 - e, 2, 3 + e, C.hair); a(0, -15 - e, 2, 4 + e, C.hair); a(3, -14 - e, 2, 3 + e, C.hair);
   a(-6, -10 - e, 3, 2, C.hair); a(-8, -9 - e, 2, 2, C.hair);
   a(-6, -7 - e, 3, 2, C.hairS); a(-8, -6 - e, 2, 2, C.hairS);
-  return (heroCache[key] = P);
+  return P;
 }
 
-function drawHero(x, y, rot, pose, e, dead) {
-  const parts = heroParts(pose, e, dead);
+// ------------------------------------------------------------------ playable characters (original pixel art, rectangles only)
+// Each parts fn pushes [x, y, w, h, colour] "pixels" (origin ~ body centre, +x = facing right). Every sprite keeps its
+// body inside roughly the same box as Cloud; long props (blade, gun-arm, tail, staff) are visual only: the hit circle
+// (HIT_R / HIT_OY) is shared by all characters, so physics and fairness never change.
+const K = {
+  out: '#130f26', red: '#ff4d4d', white: '#f4f6fa', steel: '#aab4c6', steelH: '#e6edf6', steelD: '#5d6678',
+  skin: '#f4c9a0', skinS: '#d49a76', pale: '#f1e4de', paleS: '#cdb7b2', dark: '#1b1822', gold: '#e3bf5a',
+};
+const deadEyes = (a, x) => { x = x || 2; a(x, -6, 1, 1, K.red); a(x + 2, -6, 1, 1, K.red); a(x + 1, -5, 1, 1, K.red); };
+function stdLegs(a, pose, pant, boot) {
+  if (pose === 0) { a(-2, 5, 2, 3, pant); a(1, 5, 2, 3, pant); a(-3, 7, 3, 2, boot); a(1, 7, 4, 2, boot); }
+  else { a(-3, 5, 2, 2, pant); a(-5, 6, 2, 2, pant); a(-7, 7, 3, 2, boot); a(1, 5, 2, 2, pant); a(3, 6, 2, 2, pant); a(4, 7, 3, 2, boot); }
+}
+function stdHead(a, skin, shade) { a(0, -3, 2, 1, shade); a(-2, -8, 7, 5, skin); a(-2, -8, 1, 5, shade); }
+
+const CHAR_DEFS = [
+  { id: 'cloud', name: 'Cloud', tag: 'Ex-SOLDIER', parts(a, pose, e, dead) { for (const p of cloudParts(pose, e, dead)) a(p[0], p[1], p[2], p[3], p[4]); } },
+  { id: 'tifa', name: 'Tifa', tag: 'Martial artist', parts(a, pose, e, dead) {
+    const h = '#3a2418', hS = '#26150e', rd = '#c42a3a', bk = '#1b1b24';
+    a(-6, -9, 3, 2, h); a(-8, -7, 3, 2, h); a(-10, -5 - e, 2, 6, hS); a(-9, 0 - e, 2, 2, hS);   // long tied tail
+    stdLegs(a, pose, K.skinS, '#8c1c2a');
+    a(-3, -1, 6, 3, K.white); a(-3, 0, 1, 2, '#c8d0dc'); a(-3, 2, 6, 1, K.skin);                  // crop top, midriff
+    a(-3, 3, 6, 3, bk); a(-1, -1, 1, 3, bk); a(-3, 5, 6, 1, rd);                                  // skirt + red hem
+    if (pose === 0) { a(2, 0, 2, 3, K.skin); a(2, 3, 3, 3, rd); a(2, 3, 3, 1, '#e8d27a'); }
+    else { a(2, 0, 3, 2, K.skin); a(5, -2, 3, 3, rd); a(5, -2, 3, 1, '#e8d27a'); }
+    stdHead(a, K.skin, K.skinS);
+    if (dead) deadEyes(a); else a(3, -6, 1, 2, '#7a3a2a');
+    a(-3, -11, 8, 3, h); a(-3, -8, 2, 5, hS); a(1, -9, 4, 1, h); a(4, -8, 1, 2, h); a(-5, -9, 1, 2, rd);
+  } },
+  { id: 'aerith', name: 'Aerith', tag: 'Flower girl', parts(a, pose, e, dead) {
+    const h = '#7a4a2a', hS = '#5a341c', pk = '#f08cb4', pkD = '#c86490', rb = '#b3283c';
+    a(6, -9, 1, 18, '#9a6a3a'); a(5, -9, 3, 1, K.gold); a(5, -14, 3, 4, '#7cf5c0'); a(6, -13, 1, 1, K.white);   // staff + materia orb
+    a(-5, -8, 2, 3, h); a(-5, -5, 2, 3, hS); a(-6, -2 - e, 2, 3, h); a(-6, 1 - e, 2, 3, hS);                   // long braid
+    a(-7, 4 - e, 4, 2, pk); a(-6, 4 - e, 2, 1, K.white);                                                       // ribbon
+    a(-3, -1, 6, 5, pk); a(-3, 0, 1, 4, pkD);
+    a(-4, 4, 8, 3, pk); a(-4, 6, 8, 1, pkD); if (pose === 1) { a(-5, 5, 1, 2, pk); a(4, 5, 1, 2, pk); }       // flared dress
+    a(-2, 7, 2, 1, '#6b4426'); a(1, 7, 3, 1, '#6b4426');
+    a(-3, -1, 6, 2, rb); a(-4, -2, 3, 3, rb);                                                                   // bolero
+    if (pose === 0) { a(2, 0, 2, 3, rb); a(3, 3, 2, 2, K.skin); } else { a(2, 0, 3, 2, rb); a(5, -2, 2, 2, K.skin); }
+    stdHead(a, K.skin, K.skinS);
+    if (dead) deadEyes(a); else a(3, -6, 1, 2, '#3fd08a');
+    a(-3, -11, 8, 3, h); a(-3, -8, 2, 4, hS); a(1, -9, 4, 1, h); a(-4, -10, 3, 2, pk);
+  } },
+  { id: 'barret', name: 'Barret', tag: 'Avalanche', parts(a, pose, e, dead) {
+    const sk = '#8a5634', skS = '#64381f', vest = '#3b5b3a', hr = '#15110f';
+    a(-5, 0, 2, 4, sk); a(-5, 3, 2, 1, '#d0382c');                                                // back arm + wristband
+    stdLegs(a, pose, '#3a3a44', '#15110f');
+    a(-4, -1, 8, 6, vest); a(-4, 0, 1, 5, '#27402a'); a(-1, -1, 2, 4, sk); a(-4, 4, 8, 1, '#15110f'); a(0, 4, 1, 1, K.gold);
+    const gy = pose === 0 ? 0 : -1;                                                               // gun-arm
+    a(1, gy - 1, 4, 5, K.steelD); a(1, gy - 1, 4, 1, K.steel); a(5, gy, 5, 3, K.steel); a(6, gy - 1, 1, 5, K.gold);
+    a(10, gy, 2, 3, K.dark); a(11, gy + 1, 1, 1, '#000'); a(5, gy + 2, 5, 1, K.steelD);
+    if (pose === 1) { a(12, gy - 1, 2, 5, '#ffd35a'); a(12, gy, 3, 3, K.white); }
+    a(-3, -4, 1, 1, skS); stdHead(a, sk, skS);
+    a(-2, -11, 7, 3, hr); a(-2, -9, 8, 1, '#d0382c');                                              // hair + headband
+    a(0, -7, 6, 2, '#0a0a0a'); if (!dead) a(1, -7, 1, 1, '#7aa0ff'); else deadEyes(a);             // shades
+    a(0, -4, 5, 2, hr); a(-2, -5, 1, 2, hr);                                                       // beard
+  } },
+  { id: 'red13', name: 'Red XIII', tag: 'Guardian beast', parts(a, pose, e, dead) {
+    const f = '#d8452a', fD = '#a8321c', bl = '#f2a66a', mane = '#7a2418';
+    a(-9, -3, 2, 2, f); a(-11, -5, 2, 2, f); a(-12, -7, 2, 2, fD);                                 // tail
+    a(-14, -11 - e, 4, 4, '#ff8a1e'); a(-13, -13 - e, 2, 3, '#ff5a14'); a(-13, -10 - e, 2, 2, '#ffe27a');   // flame tip
+    if (pose === 0) { a(-6, 3, 2, 5, fD); a(-3, 3, 2, 5, f); a(1, 3, 2, 5, fD); a(4, 3, 2, 5, f); a(-6, 7, 3, 1, bl); a(-3, 7, 3, 1, bl); a(1, 7, 3, 1, bl); a(4, 7, 3, 1, bl); }
+    else { a(-6, 3, 4, 2, fD); a(-8, 4, 2, 2, bl); a(-2, 3, 2, 3, f); a(1, 3, 4, 2, fD); a(5, 4, 3, 2, bl); a(3, 3, 2, 3, f); }
+    a(-7, -3, 12, 6, f); a(-7, -3, 12, 1, fD); a(-6, 2, 10, 1, bl); a(-4, -1, 1, 2, K.gold); a(-1, -1, 1, 2, K.gold);   // body + tribal bands
+    a(2, -9, 3, 8, mane); a(1, -8, 1, 5, '#3a7bd8'); a(0, -4, 1, 2, '#e8d27a');                    // mane + feather/bead ornaments
+    a(4, -8, 6, 6, f); a(9, -5, 3, 3, f); a(11, -5, 1, 1, K.dark); a(9, -3, 3, 1, bl);              // head + snout
+    a(4, -11, 2, 3, f); a(7, -11, 2, 3, f); a(5, -10, 1, 2, '#f08cb4'); a(7, -8, 3, 1, K.gold); a(9, -7, 1, 2, '#2ad4d4');   // ears, markings
+    if (dead) { a(7, -6, 1, 1, K.red); a(9, -6, 1, 1, K.red); a(8, -5, 1, 1, K.red); } else a(8, -6, 1, 1, '#ffe27a');
+    a(11, -4, 4, 1, '#f6e7c8'); a(11, -2, 3, 1, '#f6e7c8');                                        // whiskers
+  } },
+  { id: 'yuffie', name: 'Yuffie', tag: 'Ninja', parts(a, pose, e, dead) {
+    const cx = -9, cy = 0, st = K.steel, sd = K.steelD;
+    if (pose === 0) { a(cx, cy - 6, 1, 13, st); a(cx - 1, cy - 4, 3, 9, st); a(cx - 2, cy - 2, 5, 5, sd); a(cx - 6, cy, 13, 1, st); a(cx - 4, cy - 1, 9, 3, st); }
+    else for (let i = 1; i <= 5; i++) { a(cx + i - 1, cy + i - 1, 2, 2, st); a(cx - i, cy + i - 1, 2, 2, st); a(cx + i - 1, cy - i, 2, 2, st); a(cx - i, cy - i, 2, 2, st); }
+    a(cx - 1, cy - 1, 3, 3, sd); a(cx, cy, 1, 1, K.steelH);                                        // big shuriken (spins with the flap)
+    const h = '#2a1c2c', gr = '#2ea87a', grD = '#1d7a58';
+    stdLegs(a, pose, K.skinS, '#4a5a3a');
+    a(-3, -1, 6, 3, gr); a(-3, 0, 1, 2, grD); a(-3, 2, 6, 1, K.skin); a(-3, 3, 6, 2, '#c9b58a'); a(-3, 4, 6, 1, '#a08a5a');
+    if (pose === 0) { a(2, 0, 2, 3, K.skin); a(2, 3, 3, 2, '#9aa6b8'); } else { a(2, 0, 3, 2, K.skin); a(5, -2, 3, 3, '#9aa6b8'); }
+    stdHead(a, K.skin, K.skinS);
+    if (dead) deadEyes(a); else a(3, -6, 1, 2, '#3a2a20');
+    a(-3, -11, 8, 3, h); a(-4, -9, 2, 5, h); a(1, -9, 4, 1, h);
+    a(-3, -9, 9, 1, '#c9d2e0'); a(2, -10, 4, 2, K.steelH); a(3, -10, 1, 1, sd);                      // forehead protector
+  } },
+  { id: 'vincent', name: 'Vincent', tag: 'Ex-Turk', parts(a, pose, e, dead) {
+    const cp = '#7a1520', cpL = '#a82030', hr = '#17121c';
+    a(-10, -4, 7, 12, cp); a(-10, 7, 2, 3, cp); a(-7, 7, 2, 2, cp); a(-4, 7, 2, 3, cp); a(-10, -4, 1, 12, K.gold);   // tattered cape
+    a(-6, -9, 3, 16, hr); a(-8, -6 - e, 2, 12, '#2a2236');                                           // long black hair
+    stdLegs(a, pose, K.dark, '#4a2a1a'); a(-3, 8, 1, 1, K.gold); a(1, 8, 1, 1, K.gold);
+    a(-3, -1, 6, 6, '#26202e'); a(-3, 0, 1, 5, K.dark); a(-4, -3, 8, 3, cpL); a(-4, -3, 8, 1, K.gold);   // high collar
+    a(-2, 1, 1, 1, K.gold); a(-2, 3, 1, 1, K.gold);
+    const gy = pose === 0 ? 1 : -1;
+    a(2, gy, 3, 2, K.dark); a(5, gy, 1, 2, K.pale); a(5, gy - 1, 5, 2, K.steel); a(5, gy + 1, 1, 2, '#5a3a22'); a(9, gy - 1, 1, 1, K.steelH);   // pistol
+    if (pose === 1) a(10, gy - 1, 2, 2, '#ffd35a');
+    stdHead(a, K.pale, K.paleS);
+    if (dead) deadEyes(a); else a(3, -6, 1, 1, '#ff3030');
+    a(-3, -11, 8, 3, hr); a(-3, -8, 2, 5, hr); a(1, -9, 3, 3, hr); a(-3, -9, 9, 1, '#c4202e'); a(5, -9, 2, 1, '#c4202e');   // hair + red band
+  } },
+  { id: 'caitsith', name: 'Cait Sith', tag: 'Fortune teller', parts(a, pose, e, dead) {
+    const pl = '#c8b7ff', plD = '#9a86e0';
+    a(-8, pose ? -1 : 1, 2, 3, '#6a5ab8'); a(-9, pose ? -2 : 2, 1, 2, '#6a5ab8');                  // tiny bat wing
+    a(-6, 0, 13, 6, pl); a(-5, -1, 11, 1, pl); a(-5, 6, 11, 1, plD); a(-6, 0, 1, 6, plD); a(-4, 7, 3, 1, plD); a(2, 7, 3, 1, plD);   // chubby plush
+    a(-3, 2, 6, 3, '#efe8ff'); a(2, 1, 1, 1, K.dark); a(4, 1, 1, 1, K.dark); a(7, 2, 2, 2, '#ff7aa8');
+    a(-2, -4, 5, 3, '#14121a'); a(0, -3, 2, 2, K.white); a(0, -4, 3, 1, '#e03a4a');                 // Cait sitting on top
+    a(-3, -10, 7, 6, '#14121a'); a(-1, -8, 5, 3, K.white);
+    a(-3, -12, 2, 3, '#14121a'); a(3, -12, 2, 3, '#14121a'); a(-5, -7, 2, 1, K.white); a(5, -7, 2, 1, K.white);   // ears, whiskers
+    if (dead) { a(1, -8, 1, 1, K.red); a(3, -8, 1, 1, K.red); a(2, -7, 1, 1, K.red); } else { a(1, -8, 1, 1, K.dark); a(3, -8, 1, 1, K.dark); a(2, -7, 1, 1, '#ff7aa8'); }
+    a(-1, -12, 5, 1, K.gold); a(-1, -14, 1, 2, K.gold); a(1, -14, 1, 2, K.gold); a(3, -14, 1, 2, K.gold);   // crown
+  } },
+  { id: 'cid', name: 'Cid', tag: 'Pilot', parts(a, pose, e, dead) {
+    for (let i = 0; i < 16; i++) a(-8 + Math.round(i * 0.9), 8 - i, 2, 1, '#8b5a2b');            // spear shaft (diagonal)
+    a(7, -9, 2, 2, K.steelH); a(8, -11, 2, 2, K.steel); a(9, -13, 1, 2, K.steelH); a(5, -7, 1, 3, K.red);
+    const kh = '#9a8650', khL = '#b8a468', hr = '#f7d548';
+    stdLegs(a, pose, '#5a4630', '#1b1822');
+    a(-3, -1, 6, 6, kh); a(-3, 0, 1, 5, '#6e5e36'); a(0, -1, 2, 2, khL); a(-3, -1, 6, 1, K.white); a(-3, 4, 6, 1, '#3a2a18');
+    if (pose === 0) { a(2, 0, 2, 4, khL); a(2, 4, 3, 2, '#6b4426'); } else { a(2, 0, 3, 2, khL); a(5, -2, 2, 3, '#6b4426'); }
+    stdHead(a, K.skin, K.skinS);
+    if (dead) deadEyes(a); else a(3, -6, 1, 2, '#3a3a44');
+    a(5, -4, 3, 1, K.white); a(8, -4, 1, 1, '#ff6a2a');                                             // cigarette
+    a(-3, -11, 8, 2, hr); a(-3, -9, 2, 3, '#d9a526'); a(1, -9, 4, 1, hr);
+    a(-3, -9, 8, 1, '#5a3a22'); a(-2, -12, 4, 3, '#a88a3a'); a(2, -12, 4, 3, '#a88a3a'); a(-1, -11, 2, 1, '#7fe8ff'); a(3, -11, 2, 1, '#7fe8ff');   // goggles
+  } },
+  { id: 'sephiroth', name: 'Sephiroth', tag: 'One-winged angel', parts(a, pose, e, dead) {
+    const hs = '#e8edf5', hD = '#aeb8cc', hDD = '#7b88a6', coat = '#14121a';
+    for (let i = 0; i < 30; i++) a(3 - i, 4 - Math.round(i * 0.28), 2, 1, i < 3 ? '#8a8fa0' : '#f4f8ff');   // very long thin masamune
+    a(-12, -3 - e, 2, 10, hDD); a(-9, -6 - e, 3, 14, hD); a(-6, -9, 3, 17, hs);                   // very long silver hair
+    a(-4, 4, 8, 4, coat); a(-6, 6, 3, 3, coat); a(4, 6, 2, 2, coat); if (pose === 1) a(-7, 7, 2, 2, coat);   // coat tails
+    a(-2, 7, 2, 2, K.dark); a(1, 7, 3, 2, K.dark);
+    a(-3, -1, 6, 6, coat); a(-3, 0, 1, 5, '#000'); a(-1, 0, 4, 1, K.steel); a(0, 1, 2, 1, K.steelD); a(-4, -2, 4, 3, K.steel); a(-4, -2, 4, 1, K.steelH);
+    if (pose === 0) { a(2, 0, 2, 4, coat); a(2, 4, 2, 2, K.dark); } else { a(2, 0, 3, 2, coat); a(5, -2, 2, 3, K.dark); }
+    stdHead(a, K.pale, K.paleS);
+    if (dead) deadEyes(a); else { a(3, -6, 1, 2, '#3dff7a'); }
+    a(-3, -11, 8, 3, hs); a(-3, -8, 2, 4, hD); a(1, -9, 1, 5, hs); a(4, -9, 1, 7, hs); a(2, -9, 2, 1, hD);   // fringe + long front locks
+  } },
+];
+const CHAR_IDS = CHAR_DEFS.map((c) => c.id);
+const charIndex = (id) => Math.max(0, CHAR_IDS.indexOf(id));
+const charCache = {};
+function charParts(id, pose, e, dead) {
+  const key = id + ':' + (pose * 3 + e + 1 + (dead ? 6 : 0));
+  if (charCache[key]) return charCache[key];
+  const P = [];
+  const a = (x, y, w, h, c) => P.push([x, y, w, h, c]);
+  CHAR_DEFS[charIndex(id)].parts(a, pose, e, dead);
+  return (charCache[key] = P);
+}
+function loadChar() { const v = store(CHAR_KEY); return CHAR_IDS.indexOf(v) >= 0 ? v : 'cloud'; }
+selChar = playChar = loadChar();
+selIdx = charIndex(selChar);
+
+function drawChar(id, x, y, rot, pose, e, dead, unit, glow) {
+  const parts = charParts(id, pose, e, dead);
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(rot);
-  glowAt(ctx, 0, -4, 38, '107,255,200', 0.16);
+  if (glow) glowAt(ctx, 0, -4, 38, '107,255,200', 0.16);
   ctx.fillStyle = C.out;
-  for (const p of parts) ctx.fillRect((p[0] - 1) * U, (p[1] - 1) * U, (p[2] + 2) * U, (p[3] + 2) * U);
-  for (const p of parts) { ctx.fillStyle = p[4]; ctx.fillRect(p[0] * U, p[1] * U, p[2] * U + EPS, p[3] * U + EPS); }
+  for (const p of parts) ctx.fillRect((p[0] - 1) * unit, (p[1] - 1) * unit, (p[2] + 2) * unit, (p[3] + 2) * unit);
+  for (const p of parts) { ctx.fillStyle = p[4]; ctx.fillRect(p[0] * unit, p[1] * unit, p[2] * unit + EPS, p[3] * unit + EPS); }
   ctx.restore();
 }
 
+// ------------------------------------------------------------------ character select (state ST_SELECT)
+const inRect = (x, y, r) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+const padRect = (r, p) => ({ x: r.x - p, y: r.y - p, w: r.w + 2 * p, h: r.h + 2 * p });
+// Title-screen CHARACTERS button (top-left, clear of the mute button). The hit area is bigger than the drawn box.
+const charBtn = () => ({ x: 10, y: 10, w: 144, h: 34 });
+const charBtnHit = () => padRect(charBtn(), 10);
+function selLayout() {
+  const gw = Math.min(W - 24, 340), gx = (W - gw) / 2, gap = 5, cw = (gw - gap) / 2, ch = 70, gy = 52;
+  const cells = CHAR_DEFS.map((c, i) => ({ x: gx + (i % 2) * (cw + gap), y: gy + (i >> 1) * (ch + gap), w: cw, h: ch }));
+  const by = gy + 5 * (ch + gap) + 62, bw = cw;
+  return { cells, gx, gw, back: { x: gx, y: by, w: bw, h: 40 }, ok: { x: gx + bw + gap, y: by, w: bw, h: 40 }, nameY: gy + 5 * (ch + gap) + 8 };
+}
+function toLogical(e) {
+  const r = canvas.getBoundingClientRect();
+  if (!r.width || !r.height) return null;
+  return { x: (e.clientX - r.left) / r.width * W, y: (e.clientY - r.top) / r.height * H };
+}
+function openSelect() { if (state !== ST_TITLE) return; selIdx = charIndex(selChar); selDown = null; setState(ST_SELECT); }
+function closeSelect() { selDown = null; if (state === ST_SELECT) setState(ST_TITLE); }          // never starts a run
+function confirmSelect() {
+  selChar = CHAR_IDS[selIdx]; store(CHAR_KEY, selChar);
+  closeSelect();
+}
+function selMove(d) { selIdx = (selIdx + d + CHAR_DEFS.length) % CHAR_DEFS.length; }
+function selTap(x, y) {
+  const L = selLayout();
+  for (let i = 0; i < L.cells.length; i++) {
+    if (inRect(x, y, padRect(L.cells[i], 2))) { if (i === selIdx) confirmSelect(); else selIdx = i; return; }
+  }
+  if (inRect(x, y, padRect(L.back, 4))) closeSelect();
+  else if (inRect(x, y, padRect(L.ok, 4))) confirmSelect();
+}
+function selKey(e) {
+  const c = e.code;
+  if (c === 'KeyM') { if (!e.repeat) toggleMute(); return; }
+  if (c === 'ArrowLeft' || c === 'KeyA') selMove(-1);
+  else if (c === 'ArrowRight' || c === 'KeyD') selMove(1);
+  else if (c === 'ArrowUp' || c === 'KeyW') selMove(selIdx < 2 ? 8 : -2);
+  else if (c === 'ArrowDown' || c === 'KeyS') selMove(selIdx >= 8 ? -8 : 2);
+  else if (c === 'Enter' || c === 'Space' || e.key === ' ') { if (!e.repeat) confirmSelect(); }
+  else if (c === 'Escape' || c === 'Backspace') { if (!e.repeat) closeSelect(); }
+  else return;
+  e.preventDefault();
+}
+
+function drawMenuBtn(r, label, hot) {
+  drawWindow(r.x, r.y, r.w, r.h, 1);
+  if (hot) { ctx.fillStyle = 'rgba(255,255,255,0.14)'; ctx.fillRect(r.x, r.y, r.w, r.h); }
+  const sc = fitScale(label, 2, r.w - 12);
+  drawText(label, r.x + r.w / 2, r.y + (r.h - 7 * sc) / 2 + 1, sc, '#ffffff', 'center', { outline: OL });
+}
+function drawCharButton() {
+  const r = charBtn();
+  drawMenuBtn(r, 'CHARACTERS', false);
+  ctx.fillStyle = '#ffd35a'; ctx.fillRect(r.x + r.w + 6, r.y + 12, 6, 2); ctx.fillRect(r.x + r.w + 8, r.y + 10, 2, 6);   // small "+" cue
+}
+function drawSelectUI() {
+  ctx.fillStyle = 'rgba(4,10,20,0.74)'; ctx.fillRect(0, 0, W, H);
+  drawText('CHOOSE HERO', W / 2, 14, fitScale('CHOOSE HERO', 4, W - 90), TITLE_GRAD, 'center', { outline: OL });
+  const L = selLayout();
+  L.cells.forEach((r, i) => {
+    const sel = i === selIdx;
+    drawWindow(r.x, r.y, r.w, r.h, sel ? 1 : 0.82);
+    if (sel) {
+      ctx.fillStyle = 'rgba(120,255,200,0.16)'; ctx.fillRect(r.x, r.y, r.w, r.h);
+      ctx.strokeStyle = '#ffd35a'; ctx.lineWidth = 3; ctx.strokeRect(r.x - 2.5, r.y - 2.5, r.w + 5, r.h + 5);
+    }
+    const bob = Math.sin(time * 3 + i) * 1.5;
+    drawChar(CHAR_IDS[i], r.x + r.w / 2 + 6, r.y + 30 + bob, 0, sel && Math.floor(time * 4) % 2 === 0 ? 1 : 0, 0, false, 1.6, false);
+    const nm = CHAR_DEFS[i].name;
+    drawText(nm, r.x + r.w / 2, r.y + r.h - 18, fitScale(nm.toUpperCase(), 2, r.w - 10), sel ? '#ffffff' : '#bfe8dc', 'center', { outline: OL });
+    if (CHAR_IDS[i] === selChar) { ctx.fillStyle = '#47ffb4'; ctx.fillRect(r.x + r.w - 12, r.y + 6, 6, 6); }   // saved pick marker
+  });
+  const d = CHAR_DEFS[selIdx];
+  drawText(d.name, W / 2, L.nameY, fitScale(d.name.toUpperCase(), 3, W - 24), '#ffffff', 'center', { outline: OL, shadow: 'rgba(0,255,170,0.35)' });
+  drawText(d.tag, W / 2, L.nameY + 28, fitScale(d.tag.toUpperCase(), 2, W - 24), '#8dffd2', 'center', { outline: OL });
+  drawMenuBtn(L.back, 'BACK', false);
+  drawMenuBtn(L.ok, 'OK', true);
+  const hint = 'TAP AGAIN TO CONFIRM';
+  drawText(hint, W / 2, L.back.y + 50, fitScale(hint, 2, W - 16), '#9fd8c4', 'center', { outline: OL });
+  drawFanNote();
+}
+
+// Legacy name: the in-run hero is simply the locked-in character.
+function drawHero(x, y, rot, pose, e, dead) { drawChar(playChar, x, y, rot, pose, e, dead, U, true); }
 // ------------------------------------------------------------------ obstacles: mako reactor ducts
 const BODY_BANDS = [[0, 4, '#0a111b'], [4, 6, '#19283a'], [10, 10, '#2a4157'], [20, 8, '#44637e'], [28, 6, '#5b7c97'],
   [34, 10, '#3a566f'], [44, 10, '#26394c'], [54, 6, '#192838'], [60, 4, '#0a111b']];
@@ -749,6 +984,7 @@ function resetRun() {
   over.phase = 'none';
   run = { id: ++runSeq, played: false, over: false, final: 0, submitted: false, saved: false, failed: false, entry: null };
   pipes.length = 0;
+  playChar = selChar;
   score = 0; newBest = false; scoreBump = 0;
   lvPulse = 0; lvFlash = 0; shownLevel = 1; pipeSeq = 0;
   bird.x = birdX(); bird.y = H * 0.42; bird.vy = 0; bird.rot = 0; bird.flapT = 0;
@@ -820,7 +1056,7 @@ function update(dt) {
   bird.flapT = Math.max(0, bird.flapT - dt);
 
   let speed = 0;
-  if (state === ST_TITLE) {
+  if (state === ST_TITLE || state === ST_SELECT) {
     speed = 55;
     const base = H * 0.46;
     bird.y = base + Math.sin(time * 3.2) * 9;
@@ -1079,6 +1315,7 @@ function drawTitleUI() {
     const t = textW('TAP / CLICK / SPACE TO FLAP', 2) <= W - 24 ? 'TAP / CLICK / SPACE TO FLAP' : 'TAP OR SPACE TO FLAP';
     drawText(t, W / 2, 544, 2, '#ffffff', 'center', { outline: OL });
   }
+  drawCharButton();
   drawFanNote();
 }
 
@@ -1187,13 +1424,14 @@ function render() {
   drawParticles();
   const dead = state === ST_DYING || state === ST_OVER;
   const e = clamp(Math.round(bird.vy / 280), -1, 1);
-  drawHero(bird.x, bird.y, bird.rot, bird.flapT > 0 ? 1 : 0, e, dead);
+  if (state !== ST_SELECT) drawChar(state === ST_TITLE ? selChar : playChar, bird.x, bird.y, bird.rot, bird.flapT > 0 ? 1 : 0, e, dead, U, true);
   drawMotes();
   ctx.restore();
 
   ctx.fillStyle = vignette; ctx.fillRect(0, 0, W, H);
 
   if (state === ST_TITLE) drawTitleUI();
+  else if (state === ST_SELECT) drawSelectUI();
   else if (state === ST_PLAY || state === ST_DYING) drawHUD();
   else if (state === ST_OVER) { drawHUD(); drawOverUI(); }
   if (paused) drawPaused();
@@ -1204,6 +1442,7 @@ function render() {
 // ------------------------------------------------------------------ input
 function onAction() {
   Sfx.unlock();
+  if (state === ST_SELECT) return;   // select screen has its own key/pointer handling
   if (paused) { paused = false; return; }
   if (state === ST_TITLE) { resetRun(); setState(ST_PLAY); flap(); }
   else if (state === ST_PLAY) flap();
@@ -1330,6 +1569,8 @@ window.addEventListener('keydown', (e) => {
     if (!e.repeat && nowMs() - np.openedAt > 500 && e.code === 'Enter') { e.preventDefault(); submitName(); }
     return;
   }
+  if (state === ST_SELECT) { selKey(e); return; }
+  if (e.code === 'KeyC' && state === ST_TITLE) { e.preventDefault(); if (!e.repeat) openSelect(); return; }
   if (e.code === 'Space' || e.key === ' ' || e.code === 'ArrowUp' || e.code === 'KeyW' || e.code === 'Enter') {
     e.preventDefault();
     if (!e.repeat) onAction();
@@ -1342,8 +1583,21 @@ document.addEventListener('pointerdown', (e) => {
   if (e.target.closest && e.target.closest('#mute, #namebox')) return;
   if (e.pointerType === 'mouse' && e.button !== 0) return;
   e.preventDefault();
+  const pt = toLogical(e);
+  if (state === ST_SELECT) { selDown = { x: e.clientX, y: e.clientY, id: e.pointerId }; return; }
+  if (state === ST_TITLE && pt && inRect(pt.x, pt.y, charBtnHit())) { Sfx.unlock(); openSelect(); return; }
   onAction();
 }, { passive: false });
+document.addEventListener('pointerup', (e) => {
+  if (state !== ST_SELECT || !selDown || selDown.id !== e.pointerId) return;
+  const d = selDown; selDown = null;
+  const dx = e.clientX - d.x, dy = e.clientY - d.y;
+  if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy) * 1.5) { selMove(dx < 0 ? 1 : -1); return; }   // swipe
+  if (Math.hypot(dx, dy) > 14) return;
+  const pt = toLogical(e);
+  if (pt) selTap(pt.x, pt.y);
+});
+document.addEventListener('pointercancel', () => { selDown = null; });
 muteBtn.addEventListener('click', () => { toggleMute(); muteBtn.blur(); });
 document.addEventListener('contextmenu', (e) => e.preventDefault());
 document.addEventListener('visibilitychange', () => { if (document.hidden && state === ST_PLAY) paused = true; });
