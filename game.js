@@ -14,7 +14,7 @@ const HIT_R = 13, HIT_OY = -4; // hit circle (tighter than the sprite)
 const FEET = 17, HEAD = 15;    // ground / ceiling contact offsets from bird.y
 const CAP_W = 80, BODY_W = 64, CAP_H = 34;
 const U = 2.2;                 // hero sprite "pixel" size
-const BEST_KEY = 'ff7-flappy-best', MUTE_KEY = 'ff7-flappy-muted', NAME_KEY = 'ff7-flappy-name', CHAR_KEY = 'ff7-flappy-char';
+const BEST_KEY = 'ff7-flappy-best', NAME_KEY = 'ff7-flappy-name', CHAR_KEY = 'ff7-flappy-char';
 
 // Difficulty curve: everything keeps ramping with score (no early hard cap).
 const BASE_SPEED = 175, SPEED_PER_POINT = 4, SPEED_SOFT_CAP = 480;  // px/s scroll; soft cap only bites at score ~77+
@@ -30,7 +30,7 @@ const ST_TITLE = 0, ST_PLAY = 1, ST_DYING = 2, ST_OVER = 3, ST_SELECT = 4;
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 const stage = document.getElementById('stage');
-const muteBtn = document.getElementById('mute');
+const musicBtn = document.getElementById('musicbtn'), sfxBtn = document.getElementById('sfxbtn');
 const nameForm = document.getElementById('namebox');
 const nameInput = document.getElementById('nameinput');
 const nameSubmit = document.getElementById('namesubmit');
@@ -120,33 +120,20 @@ const LB = (() => {
 
 // ------------------------------------------------------------------ audio (Web Audio only, all synthesized)
 const Sfx = (() => {
-  let ac = null, master = null, noiseBuf = null;
-  let muted = store(MUTE_KEY) === '1';
-
-  function unlock() {
-    if (!ac) {
-      try {
-        const AC = window.AudioContext || window.webkitAudioContext;
-        if (!AC) return;
-        ac = new AC();
-        master = ac.createGain();
-        master.gain.value = muted ? 0 : 0.55;
-        master.connect(ac.destination);
-        const len = Math.floor(ac.sampleRate * 0.6);
-        noiseBuf = ac.createBuffer(1, len, ac.sampleRate);
-        const d = noiseBuf.getChannelData(0);
-        for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
-      } catch (e) { ac = null; return; }
+  // The AudioContext, the SFX gain (and its on/off) live in music.js (GameAudio) so SFX and music share one context.
+  let noiseBuf = null;
+  const out = () => (GameAudio.running() && GameAudio.isSfxOn() ? GameAudio.ctx() : null);
+  function getNoise(ac) {
+    if (!noiseBuf) {
+      const len = Math.floor(ac.sampleRate * 0.6);
+      noiseBuf = ac.createBuffer(1, len, ac.sampleRate);
+      const d = noiseBuf.getChannelData(0);
+      for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
     }
-    if (ac.state === 'suspended') ac.resume();
-  }
-  function setMuted(m) {
-    muted = m;
-    store(MUTE_KEY, m ? '1' : '0');
-    if (master) master.gain.value = m ? 0 : 0.55;
+    return noiseBuf;
   }
   function tone(f0, f1, dur, type, vol, delay) {
-    if (!ac || muted) return;
+    const ac = out(); if (!ac) return;
     const t = ac.currentTime + (delay || 0);
     const o = ac.createOscillator(), g = ac.createGain();
     o.type = type;
@@ -155,32 +142,43 @@ const Sfx = (() => {
     g.gain.setValueAtTime(0.0001, t);
     g.gain.linearRampToValueAtTime(vol, t + 0.006);
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    o.connect(g); g.connect(master);
+    o.connect(g); g.connect(GameAudio.sfxOut());
     o.start(t); o.stop(t + dur + 0.03);
   }
   function noise(dur, vol, fType, f0, f1, delay) {
-    if (!ac || muted) return;
+    const ac = out(); if (!ac) return;
     const t = ac.currentTime + (delay || 0);
     const s = ac.createBufferSource(), f = ac.createBiquadFilter(), g = ac.createGain();
-    s.buffer = noiseBuf;
+    s.buffer = getNoise(ac);
     f.type = fType;
     f.frequency.setValueAtTime(f0, t);
     f.frequency.exponentialRampToValueAtTime(f1, t + dur);
     g.gain.setValueAtTime(vol, t);
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    s.connect(f); f.connect(g); g.connect(master);
+    s.connect(f); f.connect(g); g.connect(GameAudio.sfxOut());
     s.start(t); s.stop(t + dur + 0.03);
   }
   return {
-    unlock, setMuted,
-    isMuted: () => muted,
-    flap() { tone(300, 640, 0.09, 'square', 0.09); noise(0.07, 0.07, 'highpass', 2500, 5000); },
+    unlock: () => GameAudio.unlock(),
+    // softer + shorter than before so it sits under the music
+    flap() { tone(300, 600, 0.06, 'square', 0.045); noise(0.045, 0.035, 'highpass', 2500, 5000); },
     level() { [523, 659, 784, 1047].forEach((f, i) => tone(f, f * 1.01, 0.11, 'square', 0.1, i * 0.065)); },
     score() { tone(880, 880, 0.08, 'triangle', 0.2); tone(1318, 1318, 0.18, 'triangle', 0.18, 0.07); },
     hit() { noise(0.35, 0.5, 'lowpass', 2200, 160); tone(170, 45, 0.3, 'sawtooth', 0.25); },
     over() { [440, 392, 349, 294].forEach((f, i) => tone(f, f * 0.99, 0.2, 'triangle', 0.16, 0.3 + i * 0.16)); },
   };
 })();
+
+// Which theme should be audible right now? Evaluated every frame; GameAudio only acts on changes.
+const SOFT = 0.4, FULL = 1;
+function syncMusic() {
+  let id = null, level = FULL;
+  if (paused || np.open) id = null;
+  else if (state === ST_PLAY) id = playChar;
+  else if (state === ST_TITLE) { id = selChar; level = SOFT; }
+  else if (state === ST_SELECT) { id = CHAR_IDS[selIdx]; level = SOFT; }
+  GameAudio.playTheme(id, level);
+}
 
 // ------------------------------------------------------------------ 5x7 pixel font (original, drawn with rectangles)
 const FONT = {};
@@ -266,7 +264,7 @@ function drawText(str, x, y, sc, color, align, opt) {
 }
 
 // ------------------------------------------------------------------ state
-let W = 480, S = 1, dpr = 1, uiK = 1;   // uiK = logical units per CSS px (to clear the HTML mute button)
+let W = 480, S = 1, dpr = 1, uiK = 1;   // uiK = logical units per CSS px (to clear the HTML audio buttons)
 let state = ST_TITLE, stateT = 0, time = 0, scroll = 0;
 let paused = false;
 let score = 0, best = parseInt(store(BEST_KEY), 10) || 0, newBest = false;
@@ -811,7 +809,7 @@ function drawChar(id, x, y, rot, pose, e, dead, unit, glow) {
 // ------------------------------------------------------------------ character select (state ST_SELECT)
 const inRect = (x, y, r) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
 const padRect = (r, p) => ({ x: r.x - p, y: r.y - p, w: r.w + 2 * p, h: r.h + 2 * p });
-// Title-screen CHARACTERS button (top-left, clear of the mute button). The hit area is bigger than the drawn box.
+// Title-screen CHARACTERS button (top-left, clear of the audio buttons). The hit area is bigger than the drawn box.
 const charBtn = () => ({ x: 10, y: 10, w: 144, h: 34 });
 const charBtnHit = () => padRect(charBtn(), 10);
 function selLayout() {
@@ -858,7 +856,7 @@ function selTap(x, y) {
 }
 function selKey(e) {
   const c = e.code;
-  if (c === 'KeyM') { if (!e.repeat) toggleMute(); return; }
+  if (c === 'KeyM') { if (!e.repeat) toggleMusic(); return; }   // (S is cursor-down here, so SFX has no key on this screen)
   if (c === 'ArrowLeft' || c === 'KeyA') selMove(-1);
   else if (c === 'ArrowRight' || c === 'KeyD') selMove(1);
   else if (c === 'ArrowUp' || c === 'KeyW') selMove(selIdx < 2 ? 8 : -2);
@@ -1339,7 +1337,7 @@ function drawHUD() {
   const sc = 8;
   drawText(score, W / 2, 40 - scoreBump * 6, sc, '#ffffff', 'center', { outline: OL, shadow: 'rgba(0,255,170,0.35)' });
   drawText('BEST ' + best, 12, 14, 2, '#bfe8dc', 'left', { outline: OL });
-  // LV label: top-right, directly below the HTML mute button (48 CSS px incl. margin), opposite BEST. The hero lives on
+  // LV label: top-right, directly below the HTML audio-button row (48 CSS px incl. margin), opposite BEST. The hero lives on
   // the left, so a wide label can never sit on it; it pulses/scales on level-up.
   const lsc = lvPulse > 0.45 ? 4 : 3;
   const right = W - 12, ly = Math.round(48 * uiK) + 6;
@@ -1570,18 +1568,25 @@ function togglePause() {
   if (state === ST_PLAY) paused = !paused;
   else if (paused) paused = false;
 }
-function updateMuteBtn() {
-  const m = Sfx.isMuted();
-  muteBtn.classList.toggle('off', m);
-  muteBtn.setAttribute('aria-label', m ? 'Unmute sound' : 'Mute sound');
-  muteBtn.setAttribute('aria-pressed', m ? 'true' : 'false');
-  muteBtn.innerHTML = '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="square">' +
-    '<path d="M4 9h4l5-4v14l-5-4H4z" fill="currentColor"/>' +
-    (m ? '<path d="M17 9l5 6M22 9l-5 6"/>' : '<path d="M16 9a4 4 0 0 1 0 6M18.5 6.5a8 8 0 0 1 0 11"/>') + '</svg>';
+const ICON = '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="square">';
+function updateAudioBtns() {
+  const m = GameAudio.isMusicOn(), x = GameAudio.isSfxOn();
+  musicBtn.classList.toggle('off', !m);
+  musicBtn.setAttribute('aria-label', m ? 'Turn music off (M)' : 'Turn music on (M)');
+  musicBtn.setAttribute('aria-pressed', m ? 'true' : 'false');
+  musicBtn.innerHTML = ICON + '<path d="M9 18V6l10-2v12" /><ellipse cx="7" cy="18" rx="3" ry="2.4" fill="currentColor"/><ellipse cx="17" cy="16" rx="3" ry="2.4" fill="currentColor"/>' +
+    (m ? '' : '<path d="M3 3l18 18"/>') + '</svg>';
+  sfxBtn.classList.toggle('off', !x);
+  sfxBtn.setAttribute('aria-label', x ? 'Turn sound effects off (S)' : 'Turn sound effects on (S)');
+  sfxBtn.setAttribute('aria-pressed', x ? 'true' : 'false');
+  sfxBtn.innerHTML = ICON + '<path d="M4 9h4l5-4v14l-5-4H4z" fill="currentColor"/>' +
+    (x ? '<path d="M16 9a4 4 0 0 1 0 6M18.5 6.5a8 8 0 0 1 0 11"/>' : '<path d="M17 9l5 6M22 9l-5 6"/>') + '</svg>';
 }
-function toggleMute() { Sfx.setMuted(!Sfx.isMuted()); updateMuteBtn(); }
+function toggleMusic() { GameAudio.unlock(); GameAudio.setMusicOn(!GameAudio.isMusicOn()); updateAudioBtns(); syncMusic(); }
+function toggleSfx() { GameAudio.unlock(); GameAudio.setSfxOn(!GameAudio.isSfxOn()); updateAudioBtns(); }
 
 window.addEventListener('keydown', (e) => {
+  GameAudio.unlock();   // any key is a user gesture
   if (np.open) {   // keys outside the form while the prompt is up: Enter = submit (or continue after a failed save); nothing else may flap or restart
     if (e.code === 'Escape' || e.code === 'Space') e.preventDefault();
     if (!e.repeat && nowMs() - np.openedAt > 500 && e.code === 'Enter') { e.preventDefault(); submitName(); }
@@ -1592,13 +1597,15 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'Space' || e.key === ' ' || e.code === 'ArrowUp' || e.code === 'KeyW' || e.code === 'Enter') {
     e.preventDefault();
     if (!e.repeat) onAction();
-  } else if (e.code === 'KeyM') { if (!e.repeat) toggleMute(); }
+  } else if (e.code === 'KeyM') { if (!e.repeat) toggleMusic(); }
+  else if (e.code === 'KeyS') { if (!e.repeat) toggleSfx(); }
   else if (e.code === 'KeyP' || e.code === 'Escape') { if (!e.repeat) togglePause(); }
 }, { passive: false });
 window.addEventListener('keyup', (e) => { if (e.code === 'Space') e.preventDefault(); }, { passive: false });
 
 document.addEventListener('pointerdown', (e) => {
-  if (e.target.closest && e.target.closest('#mute, #namebox')) return;
+  GameAudio.unlock();
+  if (e.target.closest && e.target.closest('#musicbtn, #sfxbtn, #namebox')) { GameAudio.unlock(); return; }
   if (e.pointerType === 'mouse' && e.button !== 0) return;
   e.preventDefault();
   const pt = toLogical(e);
@@ -1617,7 +1624,11 @@ document.addEventListener('pointerup', (e) => {
   if (pt) selTap(pt.x, pt.y);
 });
 document.addEventListener('pointercancel', () => { selDown = null; });
-muteBtn.addEventListener('click', () => { toggleMute(); muteBtn.blur(); });
+musicBtn.addEventListener('click', () => { toggleMusic(); musicBtn.blur(); });
+sfxBtn.addEventListener('click', () => { toggleSfx(); sfxBtn.blur(); });
+// iOS only honours some events as audio-unlocking gestures: also unlock on touchend / click (idempotent)
+document.addEventListener('touchend', () => GameAudio.unlock(), { passive: true });
+document.addEventListener('click', () => GameAudio.unlock());
 document.addEventListener('contextmenu', (e) => e.preventDefault());
 document.addEventListener('visibilitychange', () => { if (document.hidden && state === ST_PLAY) paused = true; });
 window.addEventListener('blur', () => { if (state === ST_PLAY) paused = true; });
@@ -1634,11 +1645,12 @@ function frame(ts) {
     acc += dt;
     while (acc >= STEP) { update(STEP); acc -= STEP; }
   } else acc = 0;
+  syncMusic();
   render();
   requestAnimationFrame(frame);
 }
 
-updateMuteBtn();
+updateAudioBtns();
 resize();
 refreshBoard();   // title-screen standings
 bird.x = birdX();

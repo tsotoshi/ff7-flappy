@@ -7,12 +7,13 @@
 <meta name="description" content="Midgar Flap: a Flappy-Bird-style fan game with a spiky-haired mercenary, mako pipes and a night-time industrial skyline. Fan work, not affiliated with Square Enix.">
 <meta name="theme-color" content="#070a1c">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='7' fill='%2309261f'/%3E%3Ccircle cx='8' cy='8' r='5' fill='%2347ffb4'/%3E%3Ccircle cx='6' cy='6' r='1.6' fill='%23eafff5'/%3E%3C/svg%3E">
-<link rel="stylesheet" href="style.css?v=4">
+<link rel="stylesheet" href="style.css?v=5">
 </head>
 <body>
 <div id="stage">
   <canvas id="game" width="480" height="640" aria-label="Midgar Flap game. Press space, click or tap to flap."></canvas>
-  <button id="mute" type="button" aria-label="Mute sound" title="Mute / unmute (M)"></button>
+  <button id="musicbtn" class="abtn" type="button" aria-label="Turn music off (M)" title="Music on / off (M)"></button>
+  <button id="sfxbtn" class="abtn" type="button" aria-label="Turn sound effects off (S)" title="Sound effects on / off (S)"></button>
   <!-- Leaderboard name prompt: positioned over the game-over window by game.js (hidden until needed) -->
   <form id="namebox" hidden autocomplete="off" novalidate aria-label="Submit your score to the global leaderboard">
     <input id="nameinput" type="text" maxlength="12" placeholder="YOUR NAME" aria-label="Your name for the leaderboard (letters, numbers, space, dot, dash, underscore; up to 12)"
@@ -22,6 +23,7 @@
   </form>
 </div>
 <noscript><p class="nojs">Midgar Flap needs JavaScript enabled to run.</p></noscript>
-<script src="game.js?v=4"></script>
+<script src="music.js?v=5"></script>
+<script src="game.js?v=5"></script>
 </body>
 </html>

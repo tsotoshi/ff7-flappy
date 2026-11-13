@@ -41,10 +41,9 @@ body {
   outline: none;
 }
 
-#mute {
+.abtn {
   position: absolute;
   top: 8px;
-  right: 8px;
   width: 40px;
   height: 40px;
   padding: 0;
@@ -59,10 +58,13 @@ body {
   touch-action: manipulation;
 }
 
-#mute:hover { background: rgba(14, 40, 48, 0.85); }
-#mute:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
-#mute.off { color: #ff8a8a; border-color: #b85a5a; }
-#mute svg { display: block; }
+#sfxbtn { right: 8px; }
+#musicbtn { right: 56px; }   /* 8px gap left of the SFX button: a 40px + 8px + 40px row */
+
+.abtn:hover { background: rgba(14, 40, 48, 0.85); }
+.abtn:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.abtn.off { color: #ff8a8a; border-color: #b85a5a; }
+.abtn svg { display: block; }
 
 /* ---- leaderboard name prompt (FF7-style blue menu controls; sized/positioned by game.js) */
 #namebox {
