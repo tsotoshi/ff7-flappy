@@ -161,7 +161,7 @@ const Sfx = (() => {
   return {
     unlock: () => GameAudio.unlock(),
     // softer + shorter than before so it sits under the music
-    flap() { tone(300, 600, 0.06, 'square', 0.045); noise(0.045, 0.035, 'highpass', 2500, 5000); },
+    flap() { tone(300, 600, 0.06, 'square', 0.080); noise(0.045, 0.062, 'highpass', 2500, 5000); },
     level() { [523, 659, 784, 1047].forEach((f, i) => tone(f, f * 1.01, 0.11, 'square', 0.1, i * 0.065)); },
     score() { tone(880, 880, 0.08, 'triangle', 0.2); tone(1318, 1318, 0.18, 'triangle', 0.18, 0.07); },
     hit() { noise(0.35, 0.5, 'lowpass', 2200, 160); tone(170, 45, 0.3, 'sawtooth', 0.25); },
