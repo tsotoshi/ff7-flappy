@@ -173,7 +173,7 @@ const Sfx = (() => {
 const SOFT = 0.4, FULL = 1;
 function syncMusic() {
   let id = null, level = FULL;
-  if (paused || np.open) id = null;
+  if (paused || (np.open && state !== ST_SELECT)) id = null;
   else if (state === ST_PLAY) id = playChar;
   else if (state === ST_TITLE) { id = selChar; level = SOFT; }
   else if (state === ST_SELECT) { id = CHAR_IDS[selIdx]; level = SOFT; }
@@ -827,18 +827,28 @@ function toLogical(e) {
 const overPanel = () => { const pw = Math.min(W - 24, 340); return { px: (W - pw) / 2, py: 56, pw, ph: 472 }; };
 const overCharBtn = () => { const p = overPanel(); return { x: p.px + (p.pw - 200) / 2, y: p.py + 414, w: 200, h: 44 }; };
 const overCharBtnHit = () => padRect(overCharBtn(), 8);
-const overBoardReady = () => state === ST_OVER && over.phase === 'board' && !np.open && stateT > 0.5;
+// CHARACTERS is live in every game-over phase (wait / prompt / board) once the panel has slid in.
+const overCharReady = () => state === ST_OVER && stateT > 0.5 && (over.phase === 'wait' || over.phase === 'prompt' || over.phase === 'board');
 let selFrom = ST_TITLE;   // where character select was opened from (title or game-over board)
 function openSelect() {
-  if (np.open) return;
-  if (state === ST_OVER) { if (over.phase !== 'board') return; }
+  if (state === ST_OVER) { if (!overCharReady()) return; }
   else if (state !== ST_TITLE) return;
+  if (np.open) {   // from the required name prompt: keep it open (name stays required), just get the HTML form out of the way
+    nameForm.hidden = true;
+    const ae = document.activeElement;
+    if (ae && nameForm.contains(ae)) ae.blur();
+  }
   selFrom = state; selIdx = charIndex(selChar); selDown = null; setState(ST_SELECT);
 }
 function closeSelect() {            // never starts a run
   selDown = null;
   if (state !== ST_SELECT) return;
-  if (selFrom === ST_OVER) { state = ST_OVER; stateT = 1; over.t0 = nowMs(); }   // straight back to the board: no onGameOver(), score/board kept
+  if (selFrom === ST_OVER) { state = ST_OVER; stateT = 1; over.t0 = nowMs();   // straight back to the same game-over phase: no onGameOver(), score/board kept
+    if (np.open) {   // name prompt is still up and still required: bring the form back with the typed name intact
+      nameForm.hidden = false; np.layoutKey = '';
+      if (!coarsePointer && !nameInput.disabled) { try { nameInput.focus({ preventScroll: true }); } catch (e) { /* ignore */ } }
+    }
+  }
   else setState(ST_TITLE);
 }
 function confirmSelect() {
@@ -1372,7 +1382,7 @@ function drawOverUI() {
   const cx = W / 2, inner = pw - 36;
   const prompting = over.phase === 'wait' || over.phase === 'prompt';
   const fl = prompting ? wrapText(flavor, 2, inner) : [];
-  const ph = prompting ? 350 + fl.length * 16 + 14 : overPanel().ph;
+  const ph = overPanel().ph;   // same tall panel in every phase so the CHARACTERS slot (py+414) is always inside it
   drawWindow(px, py, pw, ph, a);
   ctx.save();
   ctx.globalAlpha = a;
@@ -1416,9 +1426,8 @@ function drawOverUI() {
       const t = 'TAP TO TRY AGAIN';
       drawText(t, cx, py + 384, fitScale(t, 3, inner), '#ffffff', 'center', { outline: '#0a1430' });
     }
-    const cb = overCharBtn();
-    drawMenuBtn(cb, 'CHARACTERS', false);
   }
+  if (stateT > 0.5) drawMenuBtn(overCharBtn(), 'CHARACTERS', false);
   ctx.restore();
 }
 
@@ -1587,13 +1596,14 @@ function toggleSfx() { GameAudio.unlock(); GameAudio.setSfxOn(!GameAudio.isSfxOn
 
 window.addEventListener('keydown', (e) => {
   GameAudio.unlock();   // any key is a user gesture
+  if (state === ST_SELECT) { selKey(e); return; }
+  if (e.code === 'KeyC' && overCharReady()) { e.preventDefault(); if (!e.repeat) openSelect(); return; }
   if (np.open) {   // keys outside the form while the prompt is up: Enter = submit (or continue after a failed save); nothing else may flap or restart
     if (e.code === 'Escape' || e.code === 'Space') e.preventDefault();
     if (!e.repeat && nowMs() - np.openedAt > 500 && e.code === 'Enter') { e.preventDefault(); submitName(); }
     return;
   }
-  if (state === ST_SELECT) { selKey(e); return; }
-  if (e.code === 'KeyC' && (state === ST_TITLE || overBoardReady())) { e.preventDefault(); if (!e.repeat) openSelect(); return; }
+  if (e.code === 'KeyC' && state === ST_TITLE) { e.preventDefault(); if (!e.repeat) openSelect(); return; }
   if (e.code === 'Space' || e.key === ' ' || e.code === 'ArrowUp' || e.code === 'KeyW' || e.code === 'Enter') {
     e.preventDefault();
     if (!e.repeat) onAction();
@@ -1611,7 +1621,7 @@ document.addEventListener('pointerdown', (e) => {
   const pt = toLogical(e);
   if (state === ST_SELECT) { selDown = { x: e.clientX, y: e.clientY, id: e.pointerId }; return; }
   if (state === ST_TITLE && pt && inRect(pt.x, pt.y, charBtnHit())) { Sfx.unlock(); openSelect(); return; }
-  if (pt && overBoardReady() && inRect(pt.x, pt.y, overCharBtnHit())) { Sfx.unlock(); openSelect(); return; }
+  if (pt && overCharReady() && inRect(pt.x, pt.y, overCharBtnHit())) { Sfx.unlock(); openSelect(); return; }
   onAction();
 }, { passive: false });
 document.addEventListener('pointerup', (e) => {
