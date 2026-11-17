@@ -54,7 +54,7 @@ Everything is **100% original and generated at runtime**:
   ground are all painted procedurally on a `<canvas>` with rectangles/gradients — no image files.
 - **Font:** a custom 5×7 pixel font drawn with rectangles — no font files, no web fonts.
 - **Audio:** 100% original and synthesized at runtime with the Web Audio API (oscillators + noise): the sound effects, plus
-  short **original fan-made character theme sketches** for Cloud, Sephiroth, Yuffie and Barret (the other heroes have no music).
+  short **original fan-made character theme sketches** for all ten heroes.
   The themes are generated live from note data in `music.js`, not played from audio files. **This is not official FF7 music**
   and contains no Square Enix melodies, samples or audio. Audio starts only after your first tap/click/key (browser autoplay
   rules); the theme plays softly on the title and character-select screens, at full level during a run, and stops on game over.

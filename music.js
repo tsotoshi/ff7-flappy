@@ -1,6 +1,6 @@
 /* music.js — original, runtime-synthesized fan character themes + shared Web Audio for Midgar Flap.
  * Not official FF7 music: these are original vibe-only sketches (no Square Enix melodies, samples or audio files).
- * Contains: note data for four themes (cloud/sephiroth/yuffie/barret), a look-ahead Web Audio sequencer that loops
+ * Contains: note data for ten themes (one per hero), a look-ahead Web Audio sequencer that loops
  * seamlessly, and the shared AudioContext with separate music / SFX gains (window.GameAudio).
  */
 (function (root) {
@@ -325,9 +325,347 @@
     };
   }
 
-  const THEMES = { cloudV3: cloudV3(), sephiroth: sephiroth(), yuffie: yuffie(), barret: barret() };
-  // character id -> theme. Every other character has no music (and no fallback bed).
-  const THEME_OF = { cloud: 'cloudV3', sephiroth: 'sephiroth', yuffie: 'yuffie', barret: 'barret' };
+  /* ───────── shared helpers for the six newer themes ─────────
+   * P: write per-bar [name|null, beats] lists starting at bar `bar0`, transposed by `tr` semitones.
+   * Chord names are written in a home key and shifted by `tr` too. */
+  function P(out, inst, bar0, bars, tr, v, gate, extra) {
+    bars.forEach((items, b) => {
+      let t = (bar0 + b) * 4;
+      for (const [nm, d] of items) {
+        if (nm) out.push(Object.assign({ i: inst, p: N(nm) + tr, t, d: d * gate, v }, extra));
+        t += d;
+      }
+    });
+  }
+  function hold(out, inst, bar, names, tr, d, v, extra) {
+    names.forEach((nm) => out.push(Object.assign({ i: inst, p: N(nm) + tr, t: bar * 4, d, v }, extra)));
+  }
+
+  /* ───────────────── TIFA: D major, 112 BPM, 16 bars (A A' B A'') ───────────────── */
+  function tifa() {
+    const n = [];
+    const TONES = { D: ['D4', 'F#4', 'A4'], Bm: ['D4', 'F#4', 'B4'], G: ['D4', 'G4', 'B4'], A: ['E4', 'A4', 'C#5'] };
+    const ROOT = { D: 'D2', Bm: 'B2', G: 'G2', A: 'A2' };
+    const prog = ['D', 'Bm', 'G', 'A', 'D', 'Bm', 'G', 'A', 'G', 'A', 'Bm', 'A', 'D', 'Bm', 'G', 'D'];
+    const A1 = [
+      [['F#5', 1], ['A5', 1.5], ['F#5', .5], ['E5', 1]],
+      [['D5', 1.5], ['F#5', .5], ['B5', 2]],
+      [['B5', 1.5], ['A5', .5], ['G5', 1], ['E5', 1]],
+      [['E5', 2], ['A4', 1], ['C#5', 1]],
+    ];
+    const A2 = [A1[0],
+      [['D5', 1.5], ['F#5', .5], ['B5', 1], ['D6', 1]],
+      [['C#6', 1.5], ['B5', .5], ['G5', 1], ['B5', 1]],
+      [['A5', 3], [null, 1]]];
+    const B = [
+      [['B5', 1], ['D6', 1.5], ['B5', .5], ['G5', 1]],
+      [['A5', 1], ['C#6', 1.5], ['A5', .5], ['E5', 1]],
+      [['D6', 1.5], ['C#6', .5], ['B5', 1], ['A5', 1]],
+      [['G#5', 1], ['E5', 1], ['A5', 2]],
+    ];
+    const A3 = [A1[0], A1[1], [['G5', 1], ['B5', 1], ['A5', 1], ['F#5', 1]], [['D5', 4]]];
+    P(n, 'lead', 0, A1, 0, .85, .92); P(n, 'lead', 4, A2, 0, .88, .92);
+    P(n, 'lead', 8, B, 0, .92, .92); P(n, 'lead', 12, A3, 0, .88, .95);
+    P(n, 'harm', 8, B, -4, .7, .92); P(n, 'harm', 12, A3, -4, .7, .95);
+    prog.forEach((c, b) => {
+      const t0 = b * 4, last = b === 15, r = N(ROOT[c]);
+      hold(n, 'pad', b, TONES[c], 0, last ? 4 : 4.05, b >= 4 ? .9 : .6);
+      if (last) { n.push({ i: 'bass', p: r, t: t0, d: 3.5, v: 1 }, { i: 'kick', t: t0, d: .2, v: .9 }); return; }
+      [[0, 0, .9, 1], [1.5, 7, .4, .7], [2, 0, .9, .9], [3.5, 12, .4, .6]].forEach(([t, o, d, v]) => n.push({ i: 'bass', p: r + o, t: t0 + t, d, v }));
+      n.push({ i: 'kick', t: t0, d: .2, v: 1 }, { i: 'kick', t: t0 + 2, d: .2, v: .8 });
+      n.push({ i: 'rim', t: t0 + 1, d: .1, v: .8 }, { i: 'rim', t: t0 + 3, d: .1, v: .9 });
+      if (b >= 8 && b < 12) for (let k = 0; k < 4; k++) n.push({ i: 'hat', t: t0 + k + .5, d: .1, v: .6 });
+      if (b === 7) n.push({ i: 'rim', t: t0 + 3.5, d: .1, v: .5 }, { i: 'rim', t: t0 + 3.75, d: .1, v: .65 });
+    });
+    return {
+      id: 'tifa', title: 'Tifa — warm and steady (D major)', bpm: 112, beatsPerBar: 4, bars: 16, loops: 1, fadeOut: 1.4,
+      echo: { beats: 0.75, fb: 0.3, mix: 0.7 },
+      instruments: {
+        lead: { type: 'osc', wave: 'pulse', duty: 0.35, lp: 2500, gain: 0.17, adsr: [0.02, 0.15, 0.7, 0.15], pan: 0.05, echo: 0.25,
+          vib: { rate: 5, depth: 11, delay: 0.35 } },
+        harm: { type: 'osc', wave: 'triangle', lp: 2000, gain: 0.16, adsr: [0.03, 0.15, 0.75, 0.15], pan: -0.3, echo: 0.2 },
+        pad: { type: 'osc', wave: 'saw', lp: 750, gain: 0.04, adsr: [0.3, 0.3, 0.85, 0.5],
+          voices: [{ cents: -9, pan: -0.5 }, { cents: 9, pan: 0.5 }] },
+        bass: { type: 'osc', wave: 'triangle', gain: 0.5, adsr: [0.006, 0.12, 0.75, 0.08] },
+        kick: { type: 'thud', f0: 120, f1: 42, sweep: 0.04, decay: 0.26, gain: 0.95 },
+        rim: { type: 'noise', hp: 1400, lp: 5000, decay: 0.05, gain: 0.26, tone: { f: 900, amt: 0.4, decay: 0.04 }, pan: -0.1 },
+        hat: { type: 'noise', hp: 7000, lp: 16000, decay: 0.04, gain: 0.07, pan: 0.25 },
+      },
+      notes: n,
+    };
+  }
+
+  /* ───────────────── AERITH: F lydian, 88 BPM, 12 bars (A A' B) ───────────────── */
+  function aerith() {
+    const n = [], tr = -4;   // written in A lydian, sounds in F lydian
+    const TONES = { A: ['A3', 'C#4', 'E4'], B: ['B3', 'D#4', 'F#4'], F: ['F#3', 'A3', 'C#4'], E: ['E3', 'G#3', 'B3'], C: ['C#4', 'E4', 'G#4'] };
+    const ROOT = { A: 'A2', B: 'B2', F: 'F#2', E: 'E2', C: 'C#3' };
+    const prog = ['A', 'B', 'F', 'E', 'A', 'B', 'F', 'E', 'C', 'B', 'A', 'E'];
+    const A1 = [
+      [['A4', 1], ['C#5', 1], ['E5', 1.5], ['D#5', .5]],
+      [['F#5', 2], ['D#5', 1], ['B4', 1]],
+      [['C#5', 1], ['E5', 1], ['A5', 1.5], ['G#5', .5]],
+      [['E5', 2], ['B4', 1], [null, 1]],
+    ];
+    const A2 = [A1[0],
+      [['F#5', 1], ['B5', 1], ['D#6', 2]],
+      [['C#6', 1.5], ['A5', .5], ['F#5', 1], ['E5', 1]],
+      [['G#5', 2], ['E5', 2]]];
+    const B = [
+      [['E5', 1.5], ['G#5', .5], ['C#6', 2]],
+      [['B5', 1], ['A5', 1], ['F#5', 2]],
+      [['A5', 1], ['C#6', 1], ['E6', 2]],
+      [['D#6', 1], ['B5', 1], ['A5', 1], ['E5', 1]],
+    ];
+    P(n, 'lead', 0, A1, tr, .85, .95); P(n, 'lead', 4, A2, tr, .88, .95); P(n, 'lead', 8, B, tr, .9, .95);
+    P(n, 'bell', 4, A2, tr + 12, .45, 1, { }); P(n, 'bell', 8, B, tr + 12, .45, 1);
+    prog.forEach((c, b) => {
+      const t0 = b * 4, r = N(ROOT[c]) + tr;
+      hold(n, 'pad', b, TONES[c], tr, 4.1, .85);
+      n.push({ i: 'bass', p: r, t: t0, d: 1.9, v: 1 }, { i: 'bass', p: r + 7, t: t0 + 2, d: 1.8, v: .65 });
+      if (b >= 8) { const tn = TONES[c]; [0, 1, 2, 1, 2, 1, 2, 1].forEach((k, j) => n.push({ i: 'harp', p: N(tn[k]) + tr + 12, t: t0 + j * .5, d: .45, v: j % 2 ? .4 : .65 })); }
+      if (b >= 4) { n.push({ i: 'tick', t: t0 + 1, d: .05, v: .6 }, { i: 'tick', t: t0 + 3, d: .05, v: .7 }); n.push({ i: 'kick', t: t0, d: .2, v: .7 }); }
+      if (b >= 8) n.push({ i: 'kick', t: t0 + 2.5, d: .2, v: .5 });
+    });
+    return {
+      id: 'aerith', title: 'Aerith — airy and bright (F lydian)', bpm: 88, beatsPerBar: 4, bars: 12, loops: 1, fadeOut: 1.6,
+      echo: { beats: 0.75, fb: 0.38, mix: 0.9 },
+      instruments: {
+        lead: { type: 'osc', wave: 'triangle', lp: 3000, gain: 0.19, adsr: [0.02, 0.2, 0.7, 0.3], pan: 0.05, echo: 0.4,
+          vib: { rate: 5, depth: 12, delay: 0.4 } },
+        bell: { type: 'osc', wave: 'sine', gain: 0.12, adsr: [0.003, 1.0, 0.0, 0.6], pan: 0.3, echo: 0.5 },
+        harp: { type: 'osc', wave: 'triangle', lp: 3200, gain: 0.08, adsr: [0.004, 0.25, 0.0, 0.2], pan: -0.35, echo: 0.4 },
+        pad: { type: 'osc', wave: 'triangle', lp: 1800, gain: 0.07, adsr: [0.7, 0.3, 0.85, 0.9],
+          voices: [{ cents: -10, pan: -0.5 }, { cents: 0, pan: 0 }, { cents: 10, pan: 0.5 }], vib: { rate: 4.6, depth: 8, delay: 0.5 } },
+        bass: { type: 'osc', wave: 'triangle', gain: 0.46, adsr: [0.015, 0.2, 0.7, 0.25] },
+        kick: { type: 'thud', f0: 105, f1: 44, sweep: 0.05, decay: 0.22, gain: 0.6 },
+        tick: { type: 'noise', hp: 6000, lp: 15000, decay: 0.03, gain: 0.08, pan: 0.2 },
+      },
+      notes: n,
+    };
+  }
+
+  /* ───────────────── RED XIII: C dorian pentatonic-ish, 114 BPM, 16 bars ───────────────── */
+  function red13() {
+    const n = [];
+    const ROOT = ['C2', 'F2', 'C2', 'G2', 'C2', 'F2', 'C2', 'G2', 'Eb2', 'Bb2', 'F2', 'G2', 'C2', 'F2', 'C2', 'C2'];
+    const DRONE = { 8: ['Eb4', 'G4', 'Bb4'], 9: ['Bb3', 'D4', 'F4'], 10: ['F4', 'A4', 'C5'], 11: ['G3', 'Bb3', 'D4'] };
+    const A1 = [
+      [['C5', .75], ['C5', .25], ['G5', 1], ['F5', .5], ['Eb5', .5], ['D5', 1]],
+      [['F5', .75], ['F5', .25], ['A5', 1], ['G5', 1], ['F5', 1]],
+      [['Eb5', .75], ['Eb5', .25], ['G5', 1], ['Bb5', 1], ['A5', 1]],
+      [['G5', 1.5], ['F5', .5], ['D5', 1], [null, 1]],
+    ];
+    const alt = [A1[0], A1[1],
+      [['Eb5', .75], ['Eb5', .25], ['G5', 1], ['C6', 1], ['Bb5', 1]],
+      [['A5', 1], ['G5', 1], ['D5', 2]]];
+    const B = [
+      [['G5', 1], ['Bb5', 1], ['Eb6', 2]],
+      [['D6', 1], ['Bb5', 1], ['F5', 2]],
+      [['A5', 1], ['C6', 1], ['F6', 1], ['Eb6', 1]],
+      [['D6', 3], [null, 1]],
+    ];
+    const fin = [A1[0], A1[1], alt[2], [['C5', 2], [null, 2]]];
+    P(n, 'lead', 0, A1, 0, .85, .9); P(n, 'lead', 4, alt, 0, .88, .9);
+    P(n, 'lead', 8, B, 0, .92, .92); P(n, 'lead', 12, fin, 0, .9, .9);
+    P(n, 'low', 4, alt, -12, .8, .9); P(n, 'low', 12, fin, -12, .8, .9);
+    for (let b = 0; b < 16; b++) {
+      const t0 = b * 4, r = N(ROOT[b]), last = b === 15;
+      if (DRONE[b]) hold(n, 'pad', b, DRONE[b], 0, 4.05, .9);
+      if (last) { n.push({ i: 'bass', p: r, t: t0, d: 2, v: 1 }, { i: 'taiko', t: t0, d: .3, v: 1 }); continue; }
+      [[0, 0, .8, 1], [1.5, 0, .3, .7], [2.5, 7, .3, .7], [3, 0, .4, .85]].forEach(([t, o, d, v]) => n.push({ i: 'bass', p: r + o, t: t0 + t, d, v }));
+      n.push({ i: 'taiko', t: t0, d: .3, v: 1 }, { i: 'taiko', t: t0 + 1.5, d: .3, v: .65 }, { i: 'taiko', t: t0 + 2.5, d: .3, v: .8 });
+      n.push({ i: 'tom', t: t0 + 3.5, d: .2, v: .7 });
+      n.push({ i: 'clack', t: t0 + 2, d: .1, v: .6 });
+      if (b >= 8 && b < 12) for (let k = 0; k < 8; k++) n.push({ i: 'rattle', t: t0 + k * .5, d: .05, v: k % 2 ? .7 : .4 });
+      if (b % 4 === 3) for (let k = 0; k < 4; k++) n.push({ i: 'tom', t: t0 + 3 + k * .25, d: .2, v: .55 + k * .1 });
+    }
+    return {
+      id: 'red13', title: 'Red XIII — proud drums (C dorian)', bpm: 114, beatsPerBar: 4, bars: 16, loops: 1, fadeOut: 1.4,
+      echo: { beats: 0.75, fb: 0.3, mix: 0.5 },
+      instruments: {
+        lead: { type: 'osc', wave: 'pulse', duty: 0.28, lp: 2600, gain: 0.18, adsr: [0.02, 0.12, 0.7, 0.12], pan: 0.05, echo: 0.2,
+          vib: { rate: 5.2, depth: 14, delay: 0.3 } },
+        low: { type: 'osc', wave: 'triangle', lp: 1800, gain: 0.16, adsr: [0.03, 0.12, 0.75, 0.12], pan: -0.3 },
+        pad: { type: 'osc', wave: 'saw', lp: 700, gain: 0.04, adsr: [0.3, 0.3, 0.85, 0.5],
+          voices: [{ cents: -9, pan: -0.5 }, { cents: 9, pan: 0.5 }] },
+        bass: { type: 'osc', wave: 'triangle', gain: 0.52, adsr: [0.005, 0.1, 0.7, 0.06] },
+        taiko: { type: 'thud', f0: 105, f1: 46, sweep: 0.07, decay: 0.45, gain: 0.9, pan: -0.1 },
+        tom: { type: 'thud', f0: 170, f1: 85, sweep: 0.05, decay: 0.25, gain: 0.6, pan: 0.2 },
+        clack: { type: 'noise', hp: 1500, lp: 3800, decay: 0.04, gain: 0.26, tone: { f: 1200, amt: 0.45, decay: 0.035 }, pan: 0.3 },
+        rattle: { type: 'noise', hp: 4000, lp: 11000, decay: 0.05, gain: 0.1, pan: -0.3 },
+      },
+      notes: n,
+    };
+  }
+
+  /* ───────────────── VINCENT: C# harmonic minor, 92 BPM, 12 bars (A B C) ───────────────── */
+  function vincent() {
+    const n = [];
+    const TONES = { Cm: ['C#4', 'E4', 'G#4'], A: ['A3', 'C#4', 'E4'], Fm: ['F#3', 'A3', 'C#4'], G7: ['G#3', 'C4', 'D#4', 'F#4'], D: ['D4', 'F#4', 'A4'] };
+    const ROOT = { Cm: 'C#2', A: 'A1', Fm: 'F#2', G7: 'G#2', D: 'D2' };
+    const prog = ['Cm', 'A', 'Fm', 'G7', 'Cm', 'D', 'Fm', 'G7', 'Cm', 'A', 'D', 'G7'];
+    const A1 = [
+      [['C#5', 1.5], ['E5', .5], ['G#5', 1], ['F#5', 1]],
+      [['E5', 1], ['C#5', 1], ['A4', 2]],
+      [['A4', 1], ['C#5', 1], ['F#5', 1.5], ['E5', .5]],
+      [['D#5', 1], ['C5', 1], ['G#4', 2]],
+    ];
+    const B = [
+      [['C#6', 1], ['B5', 1], ['G#5', 2]],
+      [['A5', 1.5], ['G#5', .5], ['E5', 2]],
+      [['F#5', 1], ['A5', 1], ['C#6', 2]],
+      [['D#6', 1], ['C6', 1], ['G#5', 2]],
+    ];
+    const C = [A1[0], A1[1],
+      [['D5', 1], ['F#5', 1], ['A5', 1.5], ['G#5', .5]],
+      [['D#5', 1], ['C5', 1], ['D#5', .5], ['G#4', 1.5]]];
+    P(n, 'lead', 0, A1, 0, .85, 1); P(n, 'lead', 4, B, 0, .85, 1); P(n, 'lead', 8, C, 0, .88, 1);
+    P(n, 'ooh', 8, C, -12, .8, 1);
+    [0, 4, 8].forEach((b) => n.push({ i: 'toll', p: N('C#4'), t: b * 4, d: 3, v: .9 }, { i: 'toll', p: N('G#4'), t: b * 4, d: 3, v: .6 }));
+    prog.forEach((c, b) => {
+      const t0 = b * 4, r = N(ROOT[c]);
+      if (b >= 4) hold(n, 'pad', b, TONES[c], 0, 4.1, .85);
+      [[0, .6, 1], [.75, .2, .5], [1.5, .4, .7], [2, .6, .9], [3, .4, .6], [3.5, .3, .5]].forEach(([t, d, v]) => n.push({ i: 'bass', p: r, t: t0 + t, d, v }));
+      n.push({ i: 'sub', p: r, t: t0, d: 3.8, v: .8 });
+      n.push({ i: 'kick', t: t0, d: .3, v: 1 });
+      if (b % 2 === 0) n.push({ i: 'taiko', t: t0 + 2.5, d: .4, v: .7 });
+      if (b % 4 === 3) n.push({ i: 'slam', t: t0 + 3, d: .4, v: .8 });
+      n.push({ i: 'click', t: t0 + 1.5, d: .05, v: .5 }, { i: 'click', t: t0 + 3.5, d: .05, v: .35 });
+    });
+    return {
+      id: 'vincent', title: 'Vincent — gothic shadow (C# harmonic minor)', bpm: 92, beatsPerBar: 4, bars: 12, loops: 1, fadeOut: 1.6,
+      echo: { beats: 1.5, fb: 0.38, mix: 0.9 },
+      instruments: {
+        lead: { type: 'osc', wave: 'pulse', duty: 0.15, lp: 2300, gain: 0.16, adsr: [0.04, 0.2, 0.65, 0.35], pan: 0.1, echo: 0.45,
+          vib: { rate: 4.6, depth: 18, delay: 0.3 } },
+        ooh: { type: 'osc', wave: 'triangle', lp: 1500, gain: 0.1, adsr: [0.5, 0.3, 0.8, 0.8],
+          voices: [{ cents: -9, pan: -0.4 }, { cents: 9, pan: 0.4 }], vib: { rate: 5, depth: 12, delay: 0.4 }, echo: 0.3 },
+        pad: { type: 'osc', wave: 'saw', lp: 800, gain: 0.05, adsr: [0.6, 0.3, 0.85, 0.9],
+          voices: [{ cents: -12, pan: -0.6 }, { cents: 12, pan: 0.6 }] },
+        bass: { type: 'osc', wave: 'pulse', duty: 0.25, lp: 480, gain: 0.5, adsr: [0.004, 0.1, 0.55, 0.06] },
+        sub: { type: 'osc', wave: 'sine', gain: 0.35, adsr: [0.02, 0.3, 0.8, 0.3] },
+        toll: { type: 'osc', wave: 'sine', gain: 0.12, adsr: [0.002, 1.8, 0.0, 1.0], pan: -0.2, echo: 0.5 },
+        kick: { type: 'thud', f0: 115, f1: 36, sweep: 0.05, decay: 0.34, gain: 0.95 },
+        taiko: { type: 'thud', f0: 125, f1: 55, sweep: 0.08, decay: 0.45, gain: 0.7, pan: -0.15 },
+        slam: { type: 'noise', hp: 250, lp: 5000, decay: 0.38, gain: 0.4, tone: { f: 110, amt: 0.7, decay: 0.2 }, echo: 0.15 },
+        click: { type: 'noise', hp: 4500, lp: 14000, decay: 0.02, gain: 0.09, pan: -0.3 },
+      },
+      notes: n,
+    };
+  }
+
+  /* ───────────────── CAIT SITH: B major, 140 BPM, 16 bars (A A' B A'') ───────────────── */
+  function caitsith() {
+    const n = [], tr = -1;   // written in C major, sounds in B major
+    const ROOT = ['C3', 'A2', 'D3', 'G2', 'C3', 'A2', 'D3', 'G2', 'F2', 'F2', 'C3', 'G2', 'C3', 'A2', 'D3', 'C3'];
+    const STAB = [['E4', 'G4', 'C5'], ['E4', 'A4', 'C#5'], ['F4', 'A4', 'D5'], ['F4', 'B4', 'D5'],
+      ['E4', 'G4', 'C5'], ['E4', 'A4', 'C#5'], ['F4', 'A4', 'D5'], ['F4', 'B4', 'D5'],
+      ['F4', 'A4', 'C5'], ['F4', 'Ab4', 'C5'], ['E4', 'G4', 'C5'], ['F4', 'B4', 'D5'],
+      ['E4', 'G4', 'C5'], ['E4', 'A4', 'C#5'], ['F4', 'A4', 'D5'], ['E4', 'G4', 'C5']];
+    const A1 = [
+      [['E5', .5], ['G5', .5], ['E5', .5], ['C5', .5], ['D5', .5], [null, .5], ['G4', 1]],
+      [['E5', .5], ['A5', .5], ['E5', .5], ['C#5', .5], ['E5', .5], [null, .5], ['A4', 1]],
+      [['F5', .5], ['A5', .5], ['F5', .5], ['D5', .5], ['E5', .5], ['F5', .5], ['A5', 1]],
+      [['G5', .5], ['B5', .5], ['D6', .5], ['B5', .5], ['G5', 1], [null, 1]],
+    ];
+    const A2 = [A1[0], A1[1],
+      [['F5', .5], ['A5', .5], ['C6', .5], ['A5', .5], ['F5', .5], ['D5', .5], ['F5', 1]],
+      [['G5', .5], ['F5', .5], ['E5', .5], ['D5', .5], ['C5', 1], [null, 1]]];
+    const B = [
+      [['A5', .5], ['C6', .5], ['A5', .5], ['F5', .5], ['A5', 1], ['C6', 1]],
+      [['Ab5', .5], ['C6', .5], ['Ab5', .5], ['F5', .5], ['Ab5', 1], ['C6', 1]],
+      [['G5', .5], ['E6', .5], ['C6', .5], ['G5', .5], ['E5', 1], ['G5', 1]],
+      [['F5', .5], ['G5', .5], ['B5', .5], ['D6', .5], ['F6', 1], [null, 1]],
+    ];
+    const fin = [A1[0], A1[1], A2[2], [['G5', .5], ['B5', .5], ['D6', .5], ['G6', .5], ['C6', 2]]];
+    P(n, 'lead', 0, A1, tr, .88, .45); P(n, 'lead', 4, A2, tr, .9, .45);
+    P(n, 'lead', 8, B, tr, .92, .45); P(n, 'lead', 12, fin, tr, .9, .45);
+    for (let b = 0; b < 16; b++) {
+      const t0 = b * 4, r = N(ROOT[b]) + tr, last = b === 15;
+      if (last) { n.push({ i: 'bass', p: r, t: t0, d: .5, v: 1 }, { i: 'kick', t: t0, d: .2, v: .9 }); continue; }
+      [[0, 0], [1, 12], [2, 7], [3, 12]].forEach(([t, o]) => n.push({ i: 'bass', p: r + o, t: t0 + t, d: .3, v: t === 0 ? 1 : .8 }));
+      if (b >= 4) [1.5, 3.5].forEach((t) => STAB[b].forEach((nm) => n.push({ i: 'stab', p: N(nm) + tr, t: t0 + t, d: .2, v: .8 })));
+      n.push({ i: 'kick', t: t0, d: .2, v: .9 }, { i: 'kick', t: t0 + 2, d: .2, v: .7 });
+      n.push({ i: 'snap', t: t0 + 1, d: .1, v: .7 }, { i: 'snap', t: t0 + 3, d: .1, v: .8 });
+      for (let k = 0; k < 4; k++) n.push({ i: 'tick', t: t0 + k + .5, d: .05, v: k % 2 ? .8 : .55 });
+      if (b % 4 === 3) n.push({ i: 'snap', t: t0 + 3.5, d: .1, v: .5 }, { i: 'snap', t: t0 + 3.75, d: .1, v: .65 });
+    }
+    return {
+      id: 'caitsith', title: 'Cait Sith — bouncy fortune (B major)', bpm: 140, beatsPerBar: 4, bars: 16, loops: 1, fadeOut: 1.2,
+      echo: { beats: 0.5, fb: 0.25, mix: 0.6 },
+      instruments: {
+        lead: { type: 'osc', wave: 'square', lp: 3800, gain: 0.18, adsr: [0.003, 0.06, 0.55, 0.04], pan: 0, echo: 0.2 },
+        stab: { type: 'osc', wave: 'pulse', duty: 0.125, lp: 3000, gain: 0.05, adsr: [0.003, 0.05, 0.3, 0.04], pan: 0.4, echo: 0.2 },
+        bass: { type: 'osc', wave: 'triangle', gain: 0.52, adsr: [0.003, 0.06, 0.5, 0.04] },
+        kick: { type: 'thud', f0: 140, f1: 46, sweep: 0.03, decay: 0.16, gain: 0.8 },
+        snap: { type: 'noise', hp: 1800, lp: 8000, decay: 0.06, gain: 0.2, pan: 0.1 },
+        tick: { type: 'noise', hp: 5500, lp: 14000, decay: 0.025, gain: 0.1, pan: -0.25 },
+      },
+      notes: n,
+    };
+  }
+
+  /* ───────────────── CID: A mixolydian, 126 BPM, 16 bars (A A' B A'') ───────────────── */
+  function cid() {
+    const n = [];
+    const ROOT = ['A2', 'G2', 'D2', 'A2', 'A2', 'G2', 'D2', 'E2', 'D2', 'E2', 'G2', 'A2', 'A2', 'G2', 'D2', 'A2'];
+    const DRONE = { 8: ['D4', 'F#4', 'A4'], 9: ['E4', 'G4', 'B4'], 10: ['D4', 'G4', 'B4'], 11: ['E4', 'A4', 'C#5'] };
+    const A1 = [
+      [['A4', .75], ['A4', .25], ['C#5', .5], ['E5', .5], ['A5', 1.5], [null, .5]],
+      [['G5', .75], ['G5', .25], ['F#5', .5], ['E5', .5], ['D5', 1.5], [null, .5]],
+      [['F#5', .75], ['F#5', .25], ['A5', .5], ['F#5', .5], ['D5', 1], ['E5', 1]],
+      [['C#5', 1], ['E5', 1], ['A5', 2]],
+    ];
+    const A2 = [A1[0], A1[1],
+      [['F#5', .75], ['F#5', .25], ['A5', .5], ['D6', .5], ['C#6', 1.5], [null, .5]],
+      [['B5', 1], ['A5', 1], ['E5', 2]]];
+    const B = [
+      [['D6', 1], ['A5', .5], ['F#5', .5], ['A5', 1], ['D6', 1]],
+      [['E6', 1], ['B5', .5], ['G5', .5], ['B5', 1], ['E6', 1]],
+      [['D6', .75], ['D6', .25], ['B5', .5], ['G5', .5], ['D6', 1], ['B5', 1]],
+      [['C#6', 1], ['E6', 1.5], [null, .5], ['A5', 1]],
+    ];
+    const fin = [A1[0], A1[1], A2[2], [['A5', .75], ['A5', .25], ['E5', .5], ['A4', .5], ['A4', 2]]];
+    P(n, 'brass', 0, A1, 0, .9, .88); P(n, 'brass', 4, A2, 0, .9, .88);
+    P(n, 'brass', 8, B, 0, .95, .9); P(n, 'brass', 12, fin, 0, .92, .88);
+    P(n, 'brass2', 4, A2, -5, .75, .88); P(n, 'brass2', 12, fin, -5, .75, .88);
+    for (let b = 0; b < 16; b++) {
+      const t0 = b * 4, r = N(ROOT[b]), last = b === 15;
+      if (DRONE[b]) hold(n, 'pad', b, DRONE[b], 0, 4.05, .9);
+      if (b === 0 || b === 8 || b === 12) n.push({ i: 'crash', t: t0, d: 1, v: .7 });
+      if (last) { n.push({ i: 'bass', p: r, t: t0, d: 2, v: 1 }, { i: 'kick', t: t0, d: .2, v: 1 }, { i: 'snare', t: t0 + 2, d: .2, v: .7 }); continue; }
+      [[0, 0], [1, 7], [2, 0], [3, 7]].forEach(([t, o]) => n.push({ i: 'bass', p: r + o, t: t0 + t, d: .45, v: t === 0 ? 1 : .8 }));
+      n.push({ i: 'kick', t: t0, d: .2, v: 1 }, { i: 'kick', t: t0 + 2, d: .2, v: .9 });
+      n.push({ i: 'snare', t: t0 + 1, d: .2, v: .85 }, { i: 'snare', t: t0 + 3, d: .2, v: .95 });
+      n.push({ i: 'snare', t: t0 + .75, d: .1, v: .35 }, { i: 'snare', t: t0 + 2.75, d: .1, v: .35 });
+      for (let k = 0; k < 4; k++) n.push({ i: 'hat', t: t0 + k + .5, d: .1, v: .6 });
+      if (b % 4 === 3) for (let k = 0; k < 4; k++) n.push({ i: 'snare', t: t0 + 3 + k * .25, d: .1, v: .45 + k * .12 });
+    }
+    return {
+      id: 'cid', title: 'Cid — brash flight march (A mixolydian)', bpm: 126, beatsPerBar: 4, bars: 16, loops: 1, fadeOut: 1.2,
+      echo: { beats: 0.75, fb: 0.25, mix: 0.5 },
+      instruments: {
+        brass: { type: 'osc', wave: 'square', lp: 2800, gain: 0.17, adsr: [0.018, 0.1, 0.7, 0.08], pan: 0, echo: 0.15,
+          voices: [{ cents: -5, pan: -0.15 }, { cents: 5, pan: 0.15 }], vib: { rate: 5.3, depth: 9, delay: 0.35 } },
+        brass2: { type: 'osc', wave: 'pulse', duty: 0.3, lp: 2000, gain: 0.1, adsr: [0.02, 0.1, 0.7, 0.08], pan: -0.3 },
+        pad: { type: 'osc', wave: 'saw', lp: 800, gain: 0.045, adsr: [0.25, 0.3, 0.85, 0.5],
+          voices: [{ cents: -9, pan: -0.5 }, { cents: 9, pan: 0.5 }] },
+        bass: { type: 'osc', wave: 'triangle', gain: 0.52, adsr: [0.004, 0.08, 0.75, 0.05] },
+        kick: { type: 'thud', f0: 125, f1: 44, sweep: 0.04, decay: 0.25, gain: 0.95 },
+        snare: { type: 'noise', hp: 1000, lp: 7500, decay: 0.15, gain: 0.34, tone: { f: 190, amt: 0.45, decay: 0.09 }, pan: 0.05 },
+        hat: { type: 'noise', hp: 7000, lp: 16000, decay: 0.04, gain: 0.08, pan: 0.25 },
+        crash: { type: 'noise', hp: 3000, lp: 15000, decay: 1.1, gain: 0.15, pan: -0.2 },
+      },
+      notes: n,
+    };
+  }
+
+  const THEMES = { cloudV3: cloudV3(), sephiroth: sephiroth(), yuffie: yuffie(), barret: barret(),
+    tifa: tifa(), aerith: aerith(), red13: red13(), vincent: vincent(), caitsith: caitsith(), cid: cid() };
+  // character id -> theme id (every hero has an original theme).
+  const THEME_OF = { cloud: 'cloudV3', sephiroth: 'sephiroth', yuffie: 'yuffie', barret: 'barret',
+    tifa: 'tifa', aerith: 'aerith', red13: 'red13', vincent: 'vincent', caitsith: 'caitsith', cid: 'cid' };
 
   /* ───────────── sequencer: theme data -> Web Audio, looping seamlessly ───────────── */
   const mtof = (p) => 440 * Math.pow(2, (p - 69) / 12);
